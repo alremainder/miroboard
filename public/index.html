@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Boards — realtime whiteboard</title>
+<link rel="stylesheet" href="/home.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="topline">
+      <div class="mark">
+        <span class="mark-dot"></span> Boards
+      </div>
+      <p class="tag">An infinite canvas for teams to think out loud, together, live.</p>
+    </header>
+
+    <main class="hero">
+      <section class="panel panel-create">
+        <h1>Start a new board</h1>
+        <p>Get a private canvas and a shareable ID in one click.</p>
+        <input id="board-name" type="text" placeholder="Board name (optional)" maxlength="60" />
+        <button id="create-btn" class="btn-primary">Create board →</button>
+      </section>
+
+      <section class="panel panel-join">
+        <h1>Join a board</h1>
+        <p>Paste the board ID or full link a teammate sent you.</p>
+        <input id="join-id" type="text" placeholder="e.g. aB3xQ9pk or a full link" />
+        <button id="join-btn" class="btn-secondary">Join board →</button>
+      </section>
+    </main>
+
+    <section class="recent" id="recent-section" hidden>
+      <h2>Recent boards on this server</h2>
+      <div id="recent-list" class="recent-list"></div>
+    </section>
+
+    <footer class="foot">
+      <div class="feat"><b>Draw</b> pen, shapes, arrows, lines</div>
+      <div class="feat"><b>Stick</b> notes & text, any color</div>
+      <div class="feat"><b>Drop in</b> images & PDFs</div>
+      <div class="feat"><b>See</b> every cursor, live, no delay</div>
+    </footer>
+  </div>
+
+  <script src="/home.js"></script>
+</body>
+</html>

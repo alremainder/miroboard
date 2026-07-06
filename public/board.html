@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Board</title>
+<link rel="stylesheet" href="/board.css" />
+</head>
+<body>
+
+  <div id="topbar">
+    <a href="/" class="home-link" title="All boards">⌂</a>
+    <input id="board-name" class="board-name-input" maxlength="60" />
+    <div id="presence" class="presence"></div>
+    <button id="share-btn" class="pill-btn">Share</button>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="board-canvas"></canvas>
+    <div id="cursor-layer"></div>
+    <div id="edit-layer"></div>
+  </div>
+
+  <div id="toolbar">
+    <button data-tool="select" class="tool-btn active" title="Select (V)">↖</button>
+    <button data-tool="hand" class="tool-btn" title="Pan (H)">✋</button>
+    <div class="tool-sep"></div>
+    <button data-tool="pen" class="tool-btn" title="Pen (P)">✏</button>
+    <button data-tool="rect" class="tool-btn" title="Rectangle (R)">▭</button>
+    <button data-tool="ellipse" class="tool-btn" title="Ellipse (O)">◯</button>
+    <button data-tool="line" class="tool-btn" title="Line (L)">╱</button>
+    <button data-tool="arrow" class="tool-btn" title="Arrow (A)">↗</button>
+    <button data-tool="sticky" class="tool-btn" title="Sticky note (S)">▥</button>
+    <button data-tool="text" class="tool-btn" title="Text (T)">A</button>
+    <div class="tool-sep"></div>
+    <button id="upload-btn" class="tool-btn" title="Upload image or PDF (U)">⇧</button>
+    <input id="file-input" type="file" accept="image/*,application/pdf" multiple hidden />
+  </div>
+
+  <div id="color-bar" class="floating-bar" hidden>
+    <div class="swatches" id="swatches"></div>
+  </div>
+
+  <div id="zoom-bar" class="floating-bar zoom-bar">
+    <button id="zoom-out">–</button>
+    <span id="zoom-level">100%</span>
+    <button id="zoom-in">+</button>
+    <button id="zoom-reset" title="Reset view">⤢</button>
+  </div>
+
+  <div id="undo-bar" class="floating-bar undo-bar">
+    <button id="undo-btn" title="Undo (Ctrl+Z)">↺</button>
+    <button id="redo-btn" title="Redo (Ctrl+Shift+Z)">↻</button>
+  </div>
+
+  <div id="share-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>Share this board</h3>
+      <p>Anyone with this link can join and edit, live.</p>
+      <div class="share-row">
+        <input id="share-link" readonly />
+        <button id="copy-link">Copy</button>
+      </div>
+      <p class="board-id-label">Board ID: <b id="share-id"></b></p>
+      <button id="close-share" class="btn-close">Done</button>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="/board.js"></script>
+</body>
+</html>

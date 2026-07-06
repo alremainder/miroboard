@@ -1,0 +1,17 @@
+{
+  "name": "board-app",
+  "version": "1.0.0",
+  "description": "Realtime collaborative whiteboard (Miro-style) - single service, file-based storage, deployable on Render",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "better-sqlite3": "^11.3.0",
+    "multer": "^1.4.5-lts.1",
+    "nanoid": "^3.3.7"
+  }
+}
