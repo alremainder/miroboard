@@ -107,6 +107,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100;
   display: flex; align-items: center; justify-content: center;
 }
+.modal[hidden] {
+  display: none;
+}
 .modal-card {
   background: var(--ink); color: var(--paper); border-radius: 14px; padding: 24px; width: 380px;
   font-family: 'Inter', sans-serif;
