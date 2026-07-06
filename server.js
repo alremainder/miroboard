@@ -290,6 +290,18 @@ app.get('/api/boards/:id', requireAuth, (req, res) => {
   if (!board) return res.status(404).json({ error: 'not_found' });
   res.json(board);
 });
+app.delete('/api/boards/:id', requireAuth, (req, res) => {
+  const id = req.params.id;
+  const existing = getBoardStmt.get(id);
+  if (!existing) return res.status(404).json({ error: 'not_found' });
+  db.prepare('DELETE FROM boards WHERE id = ?').run(id);
+  liveBoards.delete(id);
+  const pending = pendingSaves.get(id);
+  if (pending) { clearTimeout(pending); pendingSaves.delete(id); }
+  // Kick anyone currently viewing/editing this board back to the home page.
+  io.to(id).emit('board:deleted');
+  res.json({ ok: true });
+});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -363,9 +375,11 @@ io.on('connection', (socket) => {
   };
   socket.data.user = me;
 
-  socket.on('join', ({ boardId }) => {
+  socket.on('join', ({ boardId, viewOnly }) => {
     if (!boardId) return;
     joinedBoard = boardId;
+    socket.data.viewOnly = !!viewOnly;
+    me.viewOnly = !!viewOnly;
     const board = loadBoard(boardId) || (createBoard('Untitled board'), loadBoard(boardId));
     const live = getLive(boardId);
     socket.join(boardId);
@@ -389,13 +403,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('shape:add', (shape) => {
-    if (!joinedBoard || !shape || !shape.id) return;
+    if (!joinedBoard || !shape || !shape.id || socket.data.viewOnly) return;
     getLive(joinedBoard).shapes.set(shape.id, shape);
     socket.to(joinedBoard).emit('shape:add', shape);
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('shape:update', (partial) => {
-    if (!joinedBoard || !partial || !partial.id) return;
+    if (!joinedBoard || !partial || !partial.id || socket.data.viewOnly) return;
     const live = getLive(joinedBoard);
     const existing = live.shapes.get(partial.id);
     if (existing) Object.assign(existing, partial); else live.shapes.set(partial.id, partial);
@@ -403,13 +417,13 @@ io.on('connection', (socket) => {
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('shape:delete', ({ id }) => {
-    if (!joinedBoard || !id) return;
+    if (!joinedBoard || !id || socket.data.viewOnly) return;
     getLive(joinedBoard).shapes.delete(id);
     socket.to(joinedBoard).emit('shape:delete', { id });
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('shapes:bulk', ({ add = [], update = [], del = [] }) => {
-    if (!joinedBoard) return;
+    if (!joinedBoard || socket.data.viewOnly) return;
     const live = getLive(joinedBoard);
     for (const s of add) live.shapes.set(s.id, s);
     for (const p of update) {
@@ -421,7 +435,7 @@ io.on('connection', (socket) => {
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('board:rename', (name) => {
-    if (!joinedBoard || !name) return;
+    if (!joinedBoard || !name || socket.data.viewOnly) return;
     renameBoardStmt.run(name.slice(0, 100), Date.now(), joinedBoard);
     socket.to(joinedBoard).emit('board:rename', name.slice(0, 100));
   });

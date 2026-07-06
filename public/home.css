@@ -155,12 +155,29 @@ button:active { transform: translateY(0); }
   background: var(--ink-2);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px 16px;
-  text-decoration: none;
+  padding: 4px 6px 4px 16px;
   color: var(--paper);
   font-size: 14px;
+  gap: 12px;
 }
-.recent-item span.rid { color: rgba(244,243,239,0.4); font-size: 12px; }
+.recent-item-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: var(--paper);
+  padding: 8px 0;
+  gap: 12px;
+}
+.recent-item span.rid { color: rgba(244,243,239,0.4); font-size: 12px; flex-shrink: 0; }
+.delete-board-btn {
+  background: transparent; border: none; color: rgba(244,243,239,0.4);
+  width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: 14px; flex-shrink: 0;
+}
+.delete-board-btn:hover { background: rgba(255,122,92,0.15); color: #ff7a5c; }
+.delete-board-btn:disabled { opacity: 0.4; cursor: default; }
 
 .foot {
   margin-top: 64px;

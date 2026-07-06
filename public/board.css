@@ -32,6 +32,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   padding: 6px 8px; border-radius: 6px; max-width: 260px;
 }
 .board-name-input:hover, .board-name-input:focus { background: var(--ink-3); outline: none; }
+.view-only-badge {
+  background: rgba(143,163,255,0.16); color: var(--peri); border: 1px solid rgba(143,163,255,0.4);
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11px;
+  padding: 4px 10px; border-radius: 20px; letter-spacing: 0.02em;
+}
 .presence { display: flex; margin-left: auto; }
 .presence .avatar {
   width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -88,6 +93,28 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid transparent;
 }
 .swatch.active { border-color: var(--paper); }
+.bar-sep { width: 1px; align-self: stretch; background: rgba(244,243,239,0.14); margin: 0 8px; }
+.widths { display: flex; gap: 4px; }
+.width-btn {
+  width: 28px; height: 28px; border: none; background: transparent; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.width-btn:hover { background: var(--ink-3); }
+.width-btn.active { background: var(--ink-3); }
+.width-btn .dot { display: block; border-radius: 50%; background: var(--paper); }
+.dot-s { width: 5px; height: 5px; }
+.dot-m { width: 9px; height: 9px; }
+.dot-l { width: 14px; height: 14px; }
+
+/* View-only mode: hide editing chrome */
+body.view-only #toolbar,
+body.view-only #undo-bar,
+body.view-only #color-bar,
+body.view-only #share-btn,
+body.view-only #delete-board-btn {
+  display: none !important;
+}
+body.view-only .board-name-input { pointer-events: none; }
 
 .zoom-bar {
   bottom: 16px; right: 16px; padding: 4px 8px; gap: 6px; color: var(--paper);
@@ -126,7 +153,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   font-weight: 600; cursor: pointer; font-family: 'Space Grotesk', sans-serif;
 }
 .btn-close { width: 100%; background: transparent; border: 1px solid var(--peri); color: var(--paper); }
+.btn-danger { background: #ff7a5c; color: #12141c; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; font-family: 'Space Grotesk', sans-serif; }
 .board-id-label { font-size: 12px; }
+.share-block { background: rgba(244,243,239,0.04); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.share-block-label { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.share-block-desc { margin: 0 0 10px; font-size: 12px; }
+.share-block .share-row { margin-bottom: 0; }
 
 /* Shape edit textareas */
 .shape-editor {

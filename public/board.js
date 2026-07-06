@@ -3,8 +3,11 @@
 
 // ---------------- Setup ----------------
 const boardId = window.BOARD_ID;
+const isViewOnly = new URLSearchParams(location.search).get('access') === 'view';
 const socket = io();
 let myName = 'You';
+
+if (isViewOnly) document.body.classList.add('view-only');
 
 const canvas = document.getElementById('board-canvas');
 const ctx = canvas.getContext('2d');
@@ -22,7 +25,10 @@ let me = { id: null, name: myName, color: '#8fa3ff' };
 let camera = { x: 0, y: 0, scale: 1 }; // screen = world*scale + {x,y}
 let tool = 'select';
 let currentColor = '#F97362';
+let currentWidth = 3;
 const PALETTE = ['#F97362', '#F2B84B', '#5FC9A8', '#5B9BD5', '#B78BE0', '#F088B6', '#FFF2A6', '#2B2E38'];
+const BOX_SHAPES = ['rect', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star'];
+const PATHLIKE_TYPES = ['path', 'highlighter'];
 
 let drawing = null;      // in-progress shape while pointer down
 let dragMode = null;     // 'move' | 'resize' | 'marquee' | 'pan'
@@ -31,6 +37,7 @@ let dragOrigin = new Map(); // id -> {x,y,w,h,x1,y1,x2,y2} snapshot for move/res
 let marqueeRect = null;
 let resizeHandle = null;
 let spaceDown = false;
+let eraseBatch = null;
 
 const undoStack = [];
 const redoStack = [];
@@ -60,7 +67,7 @@ function bbox(s) {
   if (s.type === 'line' || s.type === 'arrow') {
     return { x: Math.min(s.x1, s.x2), y: Math.min(s.y1, s.y2), w: Math.abs(s.x2 - s.x1) || 1, h: Math.abs(s.y2 - s.y1) || 1 };
   }
-  if (s.type === 'path') {
+  if (PATHLIKE_TYPES.includes(s.type)) {
     const xs = s.points.map(p => p[0]), ys = s.points.map(p => p[1]);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) || 1, h: Math.max(...ys) - Math.min(...ys) || 1 };
   }
@@ -127,6 +134,14 @@ function applyForward(op) {
 function updateUndoButtons() {
   document.getElementById('undo-btn').disabled = undoStack.length === 0;
   document.getElementById('redo-btn').disabled = redoStack.length === 0;
+}
+
+function eraseAt(wx, wy) {
+  const hit = hitTest(wx, wy);
+  if (!hit) return;
+  if (eraseBatch.some(s => s.id === hit.id)) return;
+  eraseBatch.push({ ...hit });
+  deleteLocalShape(hit.id);
 }
 
 function deleteSelected() {
@@ -196,6 +211,15 @@ function drawShape(s) {
       if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
     });
     ctx.stroke();
+  } else if (s.type === 'highlighter') {
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = strokeW * 5;
+    ctx.beginPath();
+    s.points.forEach((p, i) => {
+      const sp = worldToScreen(p[0], p[1]);
+      if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+    });
+    ctx.stroke();
   } else if (s.type === 'rect') {
     const w = s.w * camera.scale, h = s.h * camera.scale;
     ctx.strokeRect(tl.x, tl.y, w, h);
@@ -203,6 +227,47 @@ function drawShape(s) {
     const w = s.w * camera.scale, h = s.h * camera.scale;
     ctx.beginPath();
     ctx.ellipse(tl.x + w / 2, tl.y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (s.type === 'triangle') {
+    const w = s.w * camera.scale, h = s.h * camera.scale;
+    ctx.beginPath();
+    ctx.moveTo(tl.x + w / 2, tl.y);
+    ctx.lineTo(tl.x + w, tl.y + h);
+    ctx.lineTo(tl.x, tl.y + h);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (s.type === 'diamond') {
+    const w = s.w * camera.scale, h = s.h * camera.scale;
+    ctx.beginPath();
+    ctx.moveTo(tl.x + w / 2, tl.y);
+    ctx.lineTo(tl.x + w, tl.y + h / 2);
+    ctx.lineTo(tl.x + w / 2, tl.y + h);
+    ctx.lineTo(tl.x, tl.y + h / 2);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (s.type === 'hexagon') {
+    const w = s.w * camera.scale, h = s.h * camera.scale;
+    const cx = tl.x + w / 2, cy = tl.y + h / 2;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const ang = Math.PI / 180 * (60 * i - 90);
+      const px = cx + (w / 2) * Math.cos(ang), py = cy + (h / 2) * Math.sin(ang);
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  } else if (s.type === 'star') {
+    const w = s.w * camera.scale, h = s.h * camera.scale;
+    const cx = tl.x + w / 2, cy = tl.y + h / 2;
+    const outerX = w / 2, outerY = h / 2;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const ang = Math.PI / 180 * (36 * i - 90);
+      const r = i % 2 === 0 ? 1 : 0.45;
+      const px = cx + outerX * r * Math.cos(ang), py = cy + outerY * r * Math.sin(ang);
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
     ctx.stroke();
   } else if (s.type === 'line' || s.type === 'arrow') {
     const p1 = worldToScreen(s.x1, s.y1), p2 = worldToScreen(s.x2, s.y2);
@@ -334,7 +399,7 @@ function hitTest(wx, wy) {
     if (!s) continue;
     if (s.type === 'line' || s.type === 'arrow') {
       if (distToSeg(wx, wy, s.x1, s.y1, s.x2, s.y2) < 8 / camera.scale) return s;
-    } else if (s.type === 'path') {
+    } else if (PATHLIKE_TYPES.includes(s.type)) {
       for (let j = 0; j < s.points.length - 1; j++) {
         if (distToSeg(wx, wy, s.points[j][0], s.points[j][1], s.points[j + 1][0], s.points[j + 1][1]) < 8 / camera.scale) return s;
       }
@@ -387,11 +452,13 @@ wrap.addEventListener('wheel', (e) => {
   updateZoomLabel();
 }, { passive: false });
 
+const COLOR_BAR_TOOLS = ['pen', 'highlighter', 'rect', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star', 'line', 'arrow', 'sticky', 'text'];
 function setActiveTool(t) {
+  if (isViewOnly) return;
   tool = t;
   document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
-  wrap.style.cursor = t === 'hand' ? 'grab' : (t === 'select' ? 'default' : 'crosshair');
-  document.getElementById('color-bar').hidden = !['pen', 'rect', 'ellipse', 'line', 'arrow', 'sticky', 'text'].includes(t);
+  wrap.style.cursor = t === 'hand' ? 'grab' : (t === 'select' ? 'default' : (t === 'eraser' ? 'cell' : 'crosshair'));
+  document.getElementById('color-bar').hidden = !COLOR_BAR_TOOLS.includes(t);
 }
 document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.addEventListener('click', () => setActiveTool(b.dataset.tool)));
 
@@ -401,8 +468,21 @@ function onPointerDown(e) {
   const world = screenToWorld(sx, sy);
   lastPointer = { x: sx, y: sy };
 
+  if (isViewOnly) {
+    dragMode = 'pan'; panLast = { x: sx, y: sy }; wrap.style.cursor = 'grabbing';
+    return;
+  }
+
   if (tool === 'hand' || e.button === 1 || spaceDown) {
     dragMode = 'pan'; panLast = { x: sx, y: sy }; wrap.style.cursor = 'grabbing';
+    return;
+  }
+
+  if (tool === 'eraser') {
+    eraseBatch = [];
+    dragMode = 'erase';
+    eraseAt(world.x, world.y);
+    markDirty();
     return;
   }
 
@@ -432,11 +512,13 @@ function onPointerDown(e) {
   // drawing tools
   const id = uid();
   if (tool === 'pen') {
-    drawing = { id, type: 'path', points: [[world.x, world.y]], color: currentColor, strokeWidth: 3 };
-  } else if (tool === 'rect' || tool === 'ellipse') {
-    drawing = { id, type: tool, x: world.x, y: world.y, w: 0, h: 0, color: currentColor, strokeWidth: 3 };
+    drawing = { id, type: 'path', points: [[world.x, world.y]], color: currentColor, strokeWidth: currentWidth };
+  } else if (tool === 'highlighter') {
+    drawing = { id, type: 'highlighter', points: [[world.x, world.y]], color: currentColor, strokeWidth: currentWidth };
+  } else if (BOX_SHAPES.includes(tool)) {
+    drawing = { id, type: tool, x: world.x, y: world.y, w: 0, h: 0, color: currentColor, strokeWidth: currentWidth };
   } else if (tool === 'line' || tool === 'arrow') {
-    drawing = { id, type: tool, x1: world.x, y1: world.y, x2: world.x, y2: world.y, color: currentColor, strokeWidth: 3 };
+    drawing = { id, type: tool, x1: world.x, y1: world.y, x2: world.x, y2: world.y, color: currentColor, strokeWidth: currentWidth };
   } else if (tool === 'sticky') {
     const shape = { id, type: 'sticky', x: world.x - 90, y: world.y - 70, w: 180, h: 140, text: '', color: '#FFF2A6' };
     addLocalShape(shape);
@@ -463,15 +545,28 @@ function onPointerMove(e) {
 
   socket.emit('cursor', { x: world.x, y: world.y });
 
+  if (isViewOnly) {
+    if (dragMode === 'pan') {
+      camera.x += sx - panLast.x; camera.y += sy - panLast.y;
+      panLast = { x: sx, y: sy };
+      markDirty();
+    }
+    return;
+  }
+
   if (dragMode === 'pan') {
     camera.x += sx - panLast.x; camera.y += sy - panLast.y;
     panLast = { x: sx, y: sy };
     markDirty();
     return;
   }
+  if (dragMode === 'erase') {
+    eraseAt(world.x, world.y);
+    return;
+  }
   if (dragMode === 'draw' && drawing) {
-    if (drawing.type === 'path') drawing.points.push([world.x, world.y]);
-    else if (drawing.type === 'rect' || drawing.type === 'ellipse') {
+    if (PATHLIKE_TYPES.includes(drawing.type)) drawing.points.push([world.x, world.y]);
+    else if (BOX_SHAPES.includes(drawing.type)) {
       drawing.w = world.x - drawing.x; drawing.h = world.y - drawing.y;
     } else if (drawing.type === 'line' || drawing.type === 'arrow') {
       drawing.x2 = world.x; drawing.y2 = world.y;
@@ -517,6 +612,13 @@ function onPointerMove(e) {
 }
 
 function onPointerUp() {
+  if (dragMode === 'erase') {
+    if (eraseBatch && eraseBatch.length) pushUndo({ kind: 'bulk', add: [], update: [], del: eraseBatch });
+    eraseBatch = null;
+    dragMode = null; marqueeRect = null;
+    markDirty();
+    return;
+  }
   if (dragMode === 'draw' && drawing) {
     const shape = drawing;
     const b = bbox(shape);
@@ -594,10 +696,15 @@ function openEditor(shape) {
 }
 
 // ---------------- Keyboard shortcuts ----------------
-const TOOL_KEYS = { v: 'select', h: 'hand', p: 'pen', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow', s: 'sticky', t: 'text', u: 'upload' };
+const TOOL_KEYS = {
+  v: 'select', h: 'hand', p: 'pen', m: 'highlighter', e: 'eraser',
+  r: 'rect', o: 'ellipse', g: 'triangle', d: 'diamond', x: 'hexagon', j: 'star',
+  l: 'line', a: 'arrow', s: 'sticky', t: 'text', u: 'upload',
+};
 window.addEventListener('keydown', (e) => {
   if (document.activeElement && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName)) return;
   if (e.code === 'Space') { spaceDown = true; wrap.style.cursor = 'grab'; }
+  if (isViewOnly) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
@@ -624,6 +731,17 @@ PALETTE.forEach((c, i) => {
     }
   });
   swatchesEl.appendChild(el);
+});
+
+document.querySelectorAll('.width-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentWidth = Number(btn.dataset.width);
+    document.querySelectorAll('.width-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (selected.size) {
+      selected.forEach(id => updateLocalShape({ id, strokeWidth: currentWidth }));
+    }
+  });
 });
 
 // ---------------- Zoom controls ----------------
@@ -743,12 +861,20 @@ function repositionCursors() {
 requestAnimationFrame(repositionCursors);
 
 // ---------------- Socket wiring ----------------
-socket.on('connect', () => { socket.emit('join', { boardId }); });
+socket.on('connect', () => { socket.emit('join', { boardId, viewOnly: isViewOnly }); });
+socket.on('board:deleted', () => {
+  alert('This board was deleted.');
+  window.location.href = '/';
+});
 
 socket.on('board:state', (data) => {
   me.id = socket.id;
   if (data.you) { me.name = data.you.name; me.color = data.you.color; myName = data.you.name; renderPresence(); }
   document.getElementById('board-name').value = data.name || 'Untitled board';
+  if (isViewOnly) {
+    document.getElementById('view-only-badge').hidden = false;
+    document.getElementById('board-name').readOnly = true;
+  }
   shapes.clear(); shapeOrder.length = 0;
   data.shapes.forEach(s => { shapes.set(s.id, s); shapeOrder.push(s.id); });
   camera = { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2, scale: 1 };
@@ -792,8 +918,10 @@ nameInput.addEventListener('change', () => socket.emit('board:rename', nameInput
 
 const shareModal = document.getElementById('share-modal');
 document.getElementById('share-btn').addEventListener('click', () => {
-  const link = location.origin + '/board/' + boardId;
-  document.getElementById('share-link').value = link;
+  const editLink = location.origin + '/board/' + boardId;
+  const viewLink = editLink + '?access=view';
+  document.getElementById('share-link-edit').value = editLink;
+  document.getElementById('share-link-view').value = viewLink;
   document.getElementById('share-id').textContent = boardId || '(unknown)';
   shareModal.hidden = false;
 });
@@ -803,10 +931,32 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   window.location.href = '/login';
 });
 document.getElementById('close-share').addEventListener('click', () => shareModal.hidden = true);
-document.getElementById('copy-link').addEventListener('click', () => {
-  navigator.clipboard.writeText(location.href);
-  const btn = document.getElementById('copy-link');
-  btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
+
+function wireCopyButton(btnId, inputId) {
+  const btn = document.getElementById(btnId);
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById(inputId).value);
+    btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+wireCopyButton('copy-link-edit', 'share-link-edit');
+wireCopyButton('copy-link-view', 'share-link-view');
+
+// ---------------- Delete board ----------------
+const deleteModal = document.getElementById('delete-modal');
+document.getElementById('delete-board-btn').addEventListener('click', () => {
+  document.getElementById('delete-board-name').textContent = nameInput.value || 'this board';
+  deleteModal.hidden = false;
+});
+document.getElementById('cancel-delete').addEventListener('click', () => deleteModal.hidden = true);
+document.getElementById('confirm-delete').addEventListener('click', async () => {
+  const btn = document.getElementById('confirm-delete');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  try {
+    const res = await fetch('/api/boards/' + boardId, { method: 'DELETE' });
+    if (res.ok) { window.location.href = '/'; return; }
+  } catch (e) { /* fall through to re-enable button */ }
+  btn.disabled = false; btn.textContent = 'Delete board';
 });
 
 // ---------------- Init ----------------
