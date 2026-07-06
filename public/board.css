@@ -32,10 +32,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   padding: 6px 8px; border-radius: 6px; max-width: 260px;
 }
 .board-name-input:hover, .board-name-input:focus { background: var(--ink-3); outline: none; }
-.view-only-badge {
-  background: rgba(143,163,255,0.16); color: var(--peri); border: 1px solid rgba(143,163,255,0.4);
-  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 11px;
-  padding: 4px 10px; border-radius: 20px; letter-spacing: 0.02em;
+.readonly-badge {
+  background: var(--ink-3); color: var(--peri); font-size: 11px; font-weight: 600;
+  padding: 4px 10px; border-radius: 20px; font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: 0.02em; white-space: nowrap;
 }
 .presence { display: flex; margin-left: auto; }
 .presence .avatar {
@@ -74,6 +74,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   position: fixed; left: 16px; top: 50%; transform: translateY(-50%); z-index: 40;
   background: var(--ink); border-radius: 14px; padding: 8px;
   display: flex; flex-direction: column; gap: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  max-height: calc(100vh - 88px); overflow-y: auto; scrollbar-width: thin;
 }
 .tool-btn {
   width: 38px; height: 38px; border: none; background: transparent; color: var(--paper);
@@ -81,6 +82,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
 }
 .tool-btn:hover { background: var(--ink-3); }
 .tool-btn.active { background: var(--lime); color: #12141c; }
+.tool-btn:disabled { opacity: 0.25; cursor: default; }
+.tool-btn:disabled:hover { background: transparent; }
 .tool-sep { height: 1px; background: var(--line); margin: 4px 6px; background: rgba(244,243,239,0.12); }
 
 .floating-bar {
@@ -93,28 +96,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Inter', sa
   width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid transparent;
 }
 .swatch.active { border-color: var(--paper); }
-.bar-sep { width: 1px; align-self: stretch; background: rgba(244,243,239,0.14); margin: 0 8px; }
-.widths { display: flex; gap: 4px; }
-.width-btn {
-  width: 28px; height: 28px; border: none; background: transparent; border-radius: 6px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.width-btn:hover { background: var(--ink-3); }
-.width-btn.active { background: var(--ink-3); }
-.width-btn .dot { display: block; border-radius: 50%; background: var(--paper); }
-.dot-s { width: 5px; height: 5px; }
-.dot-m { width: 9px; height: 9px; }
-.dot-l { width: 14px; height: 14px; }
-
-/* View-only mode: hide editing chrome */
-body.view-only #toolbar,
-body.view-only #undo-bar,
-body.view-only #color-bar,
-body.view-only #share-btn,
-body.view-only #delete-board-btn {
-  display: none !important;
-}
-body.view-only .board-name-input { pointer-events: none; }
 
 .zoom-bar {
   bottom: 16px; right: 16px; padding: 4px 8px; gap: 6px; color: var(--paper);
@@ -124,7 +105,7 @@ body.view-only .board-name-input { pointer-events: none; }
 .zoom-bar button:hover { background: var(--ink-3); }
 #zoom-level { width: 44px; text-align: center; }
 
-.undo-bar { bottom: 16px; left: 16px; padding: 4px 6px; gap: 2px; }
+.undo-bar { bottom: 64px; right: 16px; padding: 4px 6px; gap: 2px; }
 .undo-bar button { background: transparent; border: none; color: var(--paper); font-size: 18px; width: 32px; height: 32px; cursor: pointer; border-radius: 6px; }
 .undo-bar button:hover { background: var(--ink-3); }
 .undo-bar button:disabled { opacity: 0.3; cursor: default; }
@@ -153,12 +134,11 @@ body.view-only .board-name-input { pointer-events: none; }
   font-weight: 600; cursor: pointer; font-family: 'Space Grotesk', sans-serif;
 }
 .btn-close { width: 100%; background: transparent; border: 1px solid var(--peri); color: var(--paper); }
-.btn-danger { background: #ff7a5c; color: #12141c; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; font-family: 'Space Grotesk', sans-serif; }
-.board-id-label { font-size: 12px; }
-.share-block { background: rgba(244,243,239,0.04); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
-.share-block-label { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
-.share-block-desc { margin: 0 0 10px; font-size: 12px; }
-.share-block .share-row { margin-bottom: 0; }
+.board-id-label { font-size: 12px; margin-bottom: 4px; }
+.protect-section { border-top: 1px solid rgba(244,243,239,0.12); margin-top: 6px; padding-top: 14px; }
+.protect-label { color: var(--paper) !important; font-size: 13px !important; font-weight: 600; margin-bottom: 8px !important; }
+.protect-error { color: var(--coral); font-size: 12px; margin: 6px 0 0; }
+#protect-remove { margin-top: 4px; }
 
 /* Shape edit textareas */
 .shape-editor {

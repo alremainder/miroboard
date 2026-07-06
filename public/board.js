@@ -3,17 +3,17 @@
 
 // ---------------- Setup ----------------
 const boardId = window.BOARD_ID;
-const isViewOnly = new URLSearchParams(location.search).get('access') === 'view';
 const socket = io();
 let myName = 'You';
 
-if (isViewOnly) document.body.classList.add('view-only');
-
 const canvas = document.getElementById('board-canvas');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d'); // reassigned temporarily when rendering an offscreen snapshot for export
 const wrap = document.getElementById('canvas-wrap');
 const cursorLayer = document.getElementById('cursor-layer');
 const editLayer = document.getElementById('edit-layer');
+
+let readOnly = !window.IS_AUTHED;
+let boardHasPassword = false;
 
 // ---------------- State ----------------
 const shapes = new Map();      // id -> shape
@@ -25,10 +25,7 @@ let me = { id: null, name: myName, color: '#8fa3ff' };
 let camera = { x: 0, y: 0, scale: 1 }; // screen = world*scale + {x,y}
 let tool = 'select';
 let currentColor = '#F97362';
-let currentWidth = 3;
 const PALETTE = ['#F97362', '#F2B84B', '#5FC9A8', '#5B9BD5', '#B78BE0', '#F088B6', '#FFF2A6', '#2B2E38'];
-const BOX_SHAPES = ['rect', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star'];
-const PATHLIKE_TYPES = ['path', 'highlighter'];
 
 let drawing = null;      // in-progress shape while pointer down
 let dragMode = null;     // 'move' | 'resize' | 'marquee' | 'pan'
@@ -37,7 +34,6 @@ let dragOrigin = new Map(); // id -> {x,y,w,h,x1,y1,x2,y2} snapshot for move/res
 let marqueeRect = null;
 let resizeHandle = null;
 let spaceDown = false;
-let eraseBatch = null;
 
 const undoStack = [];
 const redoStack = [];
@@ -67,7 +63,7 @@ function bbox(s) {
   if (s.type === 'line' || s.type === 'arrow') {
     return { x: Math.min(s.x1, s.x2), y: Math.min(s.y1, s.y2), w: Math.abs(s.x2 - s.x1) || 1, h: Math.abs(s.y2 - s.y1) || 1 };
   }
-  if (PATHLIKE_TYPES.includes(s.type)) {
+  if (s.type === 'path') {
     const xs = s.points.map(p => p[0]), ys = s.points.map(p => p[1]);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) || 1, h: Math.max(...ys) - Math.min(...ys) || 1 };
   }
@@ -134,14 +130,6 @@ function applyForward(op) {
 function updateUndoButtons() {
   document.getElementById('undo-btn').disabled = undoStack.length === 0;
   document.getElementById('redo-btn').disabled = redoStack.length === 0;
-}
-
-function eraseAt(wx, wy) {
-  const hit = hitTest(wx, wy);
-  if (!hit) return;
-  if (eraseBatch.some(s => s.id === hit.id)) return;
-  eraseBatch.push({ ...hit });
-  deleteLocalShape(hit.id);
 }
 
 function deleteSelected() {
@@ -211,15 +199,6 @@ function drawShape(s) {
       if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
     });
     ctx.stroke();
-  } else if (s.type === 'highlighter') {
-    ctx.globalAlpha = 0.35;
-    ctx.lineWidth = strokeW * 5;
-    ctx.beginPath();
-    s.points.forEach((p, i) => {
-      const sp = worldToScreen(p[0], p[1]);
-      if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
-    });
-    ctx.stroke();
   } else if (s.type === 'rect') {
     const w = s.w * camera.scale, h = s.h * camera.scale;
     ctx.strokeRect(tl.x, tl.y, w, h);
@@ -227,47 +206,6 @@ function drawShape(s) {
     const w = s.w * camera.scale, h = s.h * camera.scale;
     ctx.beginPath();
     ctx.ellipse(tl.x + w / 2, tl.y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2);
-    ctx.stroke();
-  } else if (s.type === 'triangle') {
-    const w = s.w * camera.scale, h = s.h * camera.scale;
-    ctx.beginPath();
-    ctx.moveTo(tl.x + w / 2, tl.y);
-    ctx.lineTo(tl.x + w, tl.y + h);
-    ctx.lineTo(tl.x, tl.y + h);
-    ctx.closePath();
-    ctx.stroke();
-  } else if (s.type === 'diamond') {
-    const w = s.w * camera.scale, h = s.h * camera.scale;
-    ctx.beginPath();
-    ctx.moveTo(tl.x + w / 2, tl.y);
-    ctx.lineTo(tl.x + w, tl.y + h / 2);
-    ctx.lineTo(tl.x + w / 2, tl.y + h);
-    ctx.lineTo(tl.x, tl.y + h / 2);
-    ctx.closePath();
-    ctx.stroke();
-  } else if (s.type === 'hexagon') {
-    const w = s.w * camera.scale, h = s.h * camera.scale;
-    const cx = tl.x + w / 2, cy = tl.y + h / 2;
-    ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const ang = Math.PI / 180 * (60 * i - 90);
-      const px = cx + (w / 2) * Math.cos(ang), py = cy + (h / 2) * Math.sin(ang);
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.stroke();
-  } else if (s.type === 'star') {
-    const w = s.w * camera.scale, h = s.h * camera.scale;
-    const cx = tl.x + w / 2, cy = tl.y + h / 2;
-    const outerX = w / 2, outerY = h / 2;
-    ctx.beginPath();
-    for (let i = 0; i < 10; i++) {
-      const ang = Math.PI / 180 * (36 * i - 90);
-      const r = i % 2 === 0 ? 1 : 0.45;
-      const px = cx + outerX * r * Math.cos(ang), py = cy + outerY * r * Math.sin(ang);
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    ctx.closePath();
     ctx.stroke();
   } else if (s.type === 'line' || s.type === 'arrow') {
     const p1 = worldToScreen(s.x1, s.y1), p2 = worldToScreen(s.x2, s.y2);
@@ -399,7 +337,7 @@ function hitTest(wx, wy) {
     if (!s) continue;
     if (s.type === 'line' || s.type === 'arrow') {
       if (distToSeg(wx, wy, s.x1, s.y1, s.x2, s.y2) < 8 / camera.scale) return s;
-    } else if (PATHLIKE_TYPES.includes(s.type)) {
+    } else if (s.type === 'path') {
       for (let j = 0; j < s.points.length - 1; j++) {
         if (distToSeg(wx, wy, s.points[j][0], s.points[j][1], s.points[j + 1][0], s.points[j + 1][1]) < 8 / camera.scale) return s;
       }
@@ -452,13 +390,25 @@ wrap.addEventListener('wheel', (e) => {
   updateZoomLabel();
 }, { passive: false });
 
-const COLOR_BAR_TOOLS = ['pen', 'highlighter', 'rect', 'ellipse', 'triangle', 'diamond', 'hexagon', 'star', 'line', 'arrow', 'sticky', 'text'];
+function applyReadOnlyUI() {
+  document.querySelectorAll('.tool-btn[data-tool]').forEach(b => {
+    b.disabled = readOnly && !['select', 'hand'].includes(b.dataset.tool);
+  });
+  document.getElementById('upload-btn').disabled = readOnly;
+  document.getElementById('board-name').disabled = readOnly;
+  document.getElementById('readonly-badge').hidden = !readOnly;
+  document.getElementById('signin-link').style.display = readOnly ? 'inline-flex' : 'none';
+  document.getElementById('logout-btn').style.display = readOnly ? 'none' : 'inline-block';
+  const protectSection = document.querySelector('.protect-section');
+  if (protectSection) protectSection.style.display = readOnly ? 'none' : '';
+  if (readOnly && tool !== 'select' && tool !== 'hand') setActiveTool('hand');
+}
+
 function setActiveTool(t) {
-  if (isViewOnly) return;
   tool = t;
   document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
-  wrap.style.cursor = t === 'hand' ? 'grab' : (t === 'select' ? 'default' : (t === 'eraser' ? 'cell' : 'crosshair'));
-  document.getElementById('color-bar').hidden = !COLOR_BAR_TOOLS.includes(t);
+  wrap.style.cursor = t === 'hand' ? 'grab' : (t === 'select' ? 'default' : 'crosshair');
+  document.getElementById('color-bar').hidden = !['pen', 'rect', 'ellipse', 'line', 'arrow', 'sticky', 'text'].includes(t);
 }
 document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.addEventListener('click', () => setActiveTool(b.dataset.tool)));
 
@@ -468,21 +418,8 @@ function onPointerDown(e) {
   const world = screenToWorld(sx, sy);
   lastPointer = { x: sx, y: sy };
 
-  if (isViewOnly) {
+  if (tool === 'hand' || e.button === 1 || spaceDown || readOnly) {
     dragMode = 'pan'; panLast = { x: sx, y: sy }; wrap.style.cursor = 'grabbing';
-    return;
-  }
-
-  if (tool === 'hand' || e.button === 1 || spaceDown) {
-    dragMode = 'pan'; panLast = { x: sx, y: sy }; wrap.style.cursor = 'grabbing';
-    return;
-  }
-
-  if (tool === 'eraser') {
-    eraseBatch = [];
-    dragMode = 'erase';
-    eraseAt(world.x, world.y);
-    markDirty();
     return;
   }
 
@@ -512,13 +449,11 @@ function onPointerDown(e) {
   // drawing tools
   const id = uid();
   if (tool === 'pen') {
-    drawing = { id, type: 'path', points: [[world.x, world.y]], color: currentColor, strokeWidth: currentWidth };
-  } else if (tool === 'highlighter') {
-    drawing = { id, type: 'highlighter', points: [[world.x, world.y]], color: currentColor, strokeWidth: currentWidth };
-  } else if (BOX_SHAPES.includes(tool)) {
-    drawing = { id, type: tool, x: world.x, y: world.y, w: 0, h: 0, color: currentColor, strokeWidth: currentWidth };
+    drawing = { id, type: 'path', points: [[world.x, world.y]], color: currentColor, strokeWidth: 3 };
+  } else if (tool === 'rect' || tool === 'ellipse') {
+    drawing = { id, type: tool, x: world.x, y: world.y, w: 0, h: 0, color: currentColor, strokeWidth: 3 };
   } else if (tool === 'line' || tool === 'arrow') {
-    drawing = { id, type: tool, x1: world.x, y1: world.y, x2: world.x, y2: world.y, color: currentColor, strokeWidth: currentWidth };
+    drawing = { id, type: tool, x1: world.x, y1: world.y, x2: world.x, y2: world.y, color: currentColor, strokeWidth: 3 };
   } else if (tool === 'sticky') {
     const shape = { id, type: 'sticky', x: world.x - 90, y: world.y - 70, w: 180, h: 140, text: '', color: '#FFF2A6' };
     addLocalShape(shape);
@@ -545,28 +480,15 @@ function onPointerMove(e) {
 
   socket.emit('cursor', { x: world.x, y: world.y });
 
-  if (isViewOnly) {
-    if (dragMode === 'pan') {
-      camera.x += sx - panLast.x; camera.y += sy - panLast.y;
-      panLast = { x: sx, y: sy };
-      markDirty();
-    }
-    return;
-  }
-
   if (dragMode === 'pan') {
     camera.x += sx - panLast.x; camera.y += sy - panLast.y;
     panLast = { x: sx, y: sy };
     markDirty();
     return;
   }
-  if (dragMode === 'erase') {
-    eraseAt(world.x, world.y);
-    return;
-  }
   if (dragMode === 'draw' && drawing) {
-    if (PATHLIKE_TYPES.includes(drawing.type)) drawing.points.push([world.x, world.y]);
-    else if (BOX_SHAPES.includes(drawing.type)) {
+    if (drawing.type === 'path') drawing.points.push([world.x, world.y]);
+    else if (drawing.type === 'rect' || drawing.type === 'ellipse') {
       drawing.w = world.x - drawing.x; drawing.h = world.y - drawing.y;
     } else if (drawing.type === 'line' || drawing.type === 'arrow') {
       drawing.x2 = world.x; drawing.y2 = world.y;
@@ -612,13 +534,6 @@ function onPointerMove(e) {
 }
 
 function onPointerUp() {
-  if (dragMode === 'erase') {
-    if (eraseBatch && eraseBatch.length) pushUndo({ kind: 'bulk', add: [], update: [], del: eraseBatch });
-    eraseBatch = null;
-    dragMode = null; marqueeRect = null;
-    markDirty();
-    return;
-  }
   if (dragMode === 'draw' && drawing) {
     const shape = drawing;
     const b = bbox(shape);
@@ -696,15 +611,11 @@ function openEditor(shape) {
 }
 
 // ---------------- Keyboard shortcuts ----------------
-const TOOL_KEYS = {
-  v: 'select', h: 'hand', p: 'pen', m: 'highlighter', e: 'eraser',
-  r: 'rect', o: 'ellipse', g: 'triangle', d: 'diamond', x: 'hexagon', j: 'star',
-  l: 'line', a: 'arrow', s: 'sticky', t: 'text', u: 'upload',
-};
+const TOOL_KEYS = { v: 'select', h: 'hand', p: 'pen', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow', s: 'sticky', t: 'text', u: 'upload' };
 window.addEventListener('keydown', (e) => {
   if (document.activeElement && ['TEXTAREA', 'INPUT'].includes(document.activeElement.tagName)) return;
   if (e.code === 'Space') { spaceDown = true; wrap.style.cursor = 'grab'; }
-  if (isViewOnly) return;
+  if (readOnly) return; // view-only visitors: no editing shortcuts at all
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
@@ -733,17 +644,6 @@ PALETTE.forEach((c, i) => {
   swatchesEl.appendChild(el);
 });
 
-document.querySelectorAll('.width-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    currentWidth = Number(btn.dataset.width);
-    document.querySelectorAll('.width-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    if (selected.size) {
-      selected.forEach(id => updateLocalShape({ id, strokeWidth: currentWidth }));
-    }
-  });
-});
-
 // ---------------- Zoom controls ----------------
 function updateZoomLabel() { document.getElementById('zoom-level').textContent = Math.round(camera.scale * 100) + '%'; }
 document.getElementById('zoom-in').addEventListener('click', () => { camera.scale = Math.min(4, camera.scale * 1.2); markDirty(); updateZoomLabel(); });
@@ -755,8 +655,9 @@ document.getElementById('redo-btn').addEventListener('click', redo);
 
 // ---------------- Upload (images + PDF) ----------------
 const fileInput = document.getElementById('file-input');
-document.getElementById('upload-btn').addEventListener('click', () => fileInput.click());
+document.getElementById('upload-btn').addEventListener('click', () => { if (!readOnly) fileInput.click(); });
 fileInput.addEventListener('change', async () => {
+  if (readOnly) return;
   const files = Array.from(fileInput.files);
   let offset = 0;
   for (const file of files) {
@@ -813,6 +714,7 @@ async function handlePdf(file, offset) {
 wrap.addEventListener('dragover', (e) => e.preventDefault());
 wrap.addEventListener('drop', async (e) => {
   e.preventDefault();
+  if (readOnly) return;
   const files = Array.from(e.dataTransfer.files || []);
   let offset = 0;
   for (const file of files) {
@@ -820,6 +722,82 @@ wrap.addEventListener('drop', async (e) => {
     else if (file.type.startsWith('image/')) await uploadAndPlace(file, offset);
     offset += 40;
   }
+});
+
+// ---------------- Export: snapshot the whole board ----------------
+function computeBoardBounds() {
+  if (!shapeOrder.length) return { x: 0, y: 0, w: 1000, h: 700 };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  shapeOrder.forEach(id => {
+    const s = shapes.get(id);
+    if (!s) return;
+    const b = bbox(s);
+    minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+  });
+  const pad = 60;
+  return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+}
+
+function waitForImages() {
+  const urls = new Set();
+  shapes.forEach(s => { if (s.type === 'image' && s.url) urls.add(s.url); });
+  return Promise.all(Array.from(urls).map(url => new Promise(resolve => {
+    const img = getImage(url);
+    if (img.complete && img.naturalWidth) return resolve();
+    img.addEventListener('load', resolve, { once: true });
+    img.addEventListener('error', resolve, { once: true });
+  })));
+}
+
+// Renders every shape on an offscreen canvas sized to the board's full
+// content (not just the current viewport) by temporarily borrowing the
+// same drawShape()/worldToScreen() pipeline used for the live canvas.
+async function renderSnapshot() {
+  await waitForImages();
+  const bounds = computeBoardBounds();
+  const scale = 2; // supersample for a crisper export
+  const off = document.createElement('canvas');
+  off.width = Math.max(1, Math.round(bounds.w * scale));
+  off.height = Math.max(1, Math.round(bounds.h * scale));
+
+  const prevCtx = ctx, prevCamera = camera;
+  ctx = off.getContext('2d');
+  camera = { x: -bounds.x * scale, y: -bounds.y * scale, scale };
+
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg') || '#eceae3';
+  ctx.fillRect(0, 0, off.width, off.height);
+  shapeOrder.forEach(id => { const s = shapes.get(id); if (s) drawShape(s); });
+
+  ctx = prevCtx; camera = prevCamera;
+  markDirty();
+  return off;
+}
+
+document.getElementById('export-btn').addEventListener('click', () => { document.getElementById('export-modal').hidden = false; });
+document.getElementById('close-export').addEventListener('click', () => { document.getElementById('export-modal').hidden = true; });
+document.getElementById('export-png').addEventListener('click', async (e) => {
+  const btn = e.currentTarget; const label = btn.textContent; btn.textContent = 'Rendering…';
+  try {
+    const off = await renderSnapshot();
+    const a = document.createElement('a');
+    a.download = (document.getElementById('board-name').value || 'board').trim() + '.png';
+    a.href = off.toDataURL('image/png');
+    a.click();
+    document.getElementById('export-modal').hidden = true;
+  } finally { btn.textContent = label; }
+});
+document.getElementById('export-pdf').addEventListener('click', async (e) => {
+  const btn = e.currentTarget; const label = btn.textContent; btn.textContent = 'Rendering…';
+  try {
+    const off = await renderSnapshot();
+    const { jsPDF } = window.jspdf;
+    const w = off.width, h = off.height;
+    const doc = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h] });
+    doc.addImage(off.toDataURL('image/png'), 'PNG', 0, 0, w, h);
+    doc.save((document.getElementById('board-name').value || 'board').trim() + '.pdf');
+    document.getElementById('export-modal').hidden = true;
+  } finally { btn.textContent = label; }
 });
 
 // ---------------- Presence & cursors ----------------
@@ -861,26 +839,28 @@ function repositionCursors() {
 requestAnimationFrame(repositionCursors);
 
 // ---------------- Socket wiring ----------------
-socket.on('connect', () => { socket.emit('join', { boardId, viewOnly: isViewOnly }); });
-socket.on('board:deleted', () => {
-  alert('This board was deleted.');
-  window.location.href = '/';
-});
+socket.on('connect', () => { socket.emit('join', { boardId }); });
 
 socket.on('board:state', (data) => {
+  document.getElementById('lock-modal').hidden = true;
   me.id = socket.id;
   if (data.you) { me.name = data.you.name; me.color = data.you.color; myName = data.you.name; renderPresence(); }
   document.getElementById('board-name').value = data.name || 'Untitled board';
-  if (isViewOnly) {
-    document.getElementById('view-only-badge').hidden = false;
-    document.getElementById('board-name').readOnly = true;
-  }
+  readOnly = !!data.readOnly;
+  boardHasPassword = !!data.hasPassword;
+  applyReadOnlyUI();
   shapes.clear(); shapeOrder.length = 0;
   data.shapes.forEach(s => { shapes.set(s.id, s); shapeOrder.push(s.id); });
   camera = { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2, scale: 1 };
   resizeCanvas();
   updateZoomLabel();
   markDirty();
+});
+
+socket.on('board:locked', () => {
+  document.getElementById('lock-error').hidden = true;
+  document.getElementById('lock-password').value = '';
+  document.getElementById('lock-modal').hidden = false;
 });
 
 socket.on('users:list', (list) => { list.forEach(u => users.set(u.id, { ...u })); renderPresence(); });
@@ -917,13 +897,73 @@ const nameInput = document.getElementById('board-name');
 nameInput.addEventListener('change', () => socket.emit('board:rename', nameInput.value));
 
 const shareModal = document.getElementById('share-modal');
+function refreshProtectUI() {
+  const status = document.getElementById('protect-status');
+  const removeBtn = document.getElementById('protect-remove');
+  const passInput = document.getElementById('protect-password');
+  if (boardHasPassword) {
+    status.textContent = 'This board is password protected. Set a new one to change it:';
+    removeBtn.hidden = false;
+    passInput.placeholder = 'New password';
+  } else {
+    status.textContent = 'Protect this board with a password';
+    removeBtn.hidden = true;
+    passInput.placeholder = 'Set a password';
+  }
+}
 document.getElementById('share-btn').addEventListener('click', () => {
-  const editLink = location.origin + '/board/' + boardId;
-  const viewLink = editLink + '?access=view';
-  document.getElementById('share-link-edit').value = editLink;
-  document.getElementById('share-link-view').value = viewLink;
+  const link = location.origin + '/board/' + boardId;
+  document.getElementById('share-link').value = link;
   document.getElementById('share-id').textContent = boardId || '(unknown)';
+  document.getElementById('protect-error').hidden = true;
+  document.getElementById('protect-password').value = '';
+  refreshProtectUI();
   shareModal.hidden = false;
+});
+
+document.getElementById('protect-save').addEventListener('click', async () => {
+  const errEl = document.getElementById('protect-error');
+  const password = document.getElementById('protect-password').value;
+  if (!password || password.length < 4) {
+    errEl.textContent = 'Password must be at least 4 characters.'; errEl.hidden = false; return;
+  }
+  const res = await fetch('/api/boards/' + boardId + '/password', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+  });
+  if (res.ok) {
+    boardHasPassword = true;
+    document.getElementById('protect-password').value = '';
+    errEl.hidden = true;
+    refreshProtectUI();
+  } else {
+    errEl.textContent = 'Could not set password.'; errEl.hidden = false;
+  }
+});
+document.getElementById('protect-remove').addEventListener('click', async () => {
+  const res = await fetch('/api/boards/' + boardId + '/password', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: '' }),
+  });
+  if (res.ok) { boardHasPassword = false; refreshProtectUI(); }
+});
+
+document.getElementById('lock-submit').addEventListener('click', async () => {
+  const errEl = document.getElementById('lock-error');
+  const password = document.getElementById('lock-password').value;
+  const res = await fetch('/api/boards/' + boardId + '/unlock', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+  });
+  if (res.ok) {
+    errEl.hidden = true;
+    // Reconnect so the socket handshake picks up the freshly-unlocked
+    // session cookie, then the existing 'connect' handler re-joins.
+    socket.disconnect();
+    socket.connect();
+  } else {
+    errEl.textContent = 'Incorrect password.'; errEl.hidden = false;
+  }
+});
+document.getElementById('lock-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('lock-submit').click();
 });
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
@@ -931,36 +971,15 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   window.location.href = '/login';
 });
 document.getElementById('close-share').addEventListener('click', () => shareModal.hidden = true);
-
-function wireCopyButton(btnId, inputId) {
-  const btn = document.getElementById(btnId);
-  btn.addEventListener('click', () => {
-    navigator.clipboard.writeText(document.getElementById(inputId).value);
-    btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
-  });
-}
-wireCopyButton('copy-link-edit', 'share-link-edit');
-wireCopyButton('copy-link-view', 'share-link-view');
-
-// ---------------- Delete board ----------------
-const deleteModal = document.getElementById('delete-modal');
-document.getElementById('delete-board-btn').addEventListener('click', () => {
-  document.getElementById('delete-board-name').textContent = nameInput.value || 'this board';
-  deleteModal.hidden = false;
-});
-document.getElementById('cancel-delete').addEventListener('click', () => deleteModal.hidden = true);
-document.getElementById('confirm-delete').addEventListener('click', async () => {
-  const btn = document.getElementById('confirm-delete');
-  btn.disabled = true; btn.textContent = 'Deleting…';
-  try {
-    const res = await fetch('/api/boards/' + boardId, { method: 'DELETE' });
-    if (res.ok) { window.location.href = '/'; return; }
-  } catch (e) { /* fall through to re-enable button */ }
-  btn.disabled = false; btn.textContent = 'Delete board';
+document.getElementById('copy-link').addEventListener('click', () => {
+  navigator.clipboard.writeText(location.href);
+  const btn = document.getElementById('copy-link');
+  btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
 });
 
 // ---------------- Init ----------------
 resizeCanvas();
 setActiveTool('select');
 updateUndoButtons();
+applyReadOnlyUI();
 })();

@@ -22,6 +22,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     name TEXT,
     data TEXT NOT NULL DEFAULT '[]',
+    password_hash TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );
@@ -70,12 +71,19 @@ if (!usersCols.includes('phone')) {
   `);
 }
 
+// One-time migration: add password_hash to boards created by older versions.
+const boardsCols = db.prepare("PRAGMA table_info(boards)").all().map(c => c.name);
+if (!boardsCols.includes('password_hash')) {
+  db.exec('ALTER TABLE boards ADD COLUMN password_hash TEXT');
+}
+
 const getBoardStmt = db.prepare('SELECT * FROM boards WHERE id = ?');
 const insertBoardStmt = db.prepare(
   'INSERT INTO boards (id, name, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
 );
 const updateBoardStmt = db.prepare('UPDATE boards SET data = ?, updated_at = ? WHERE id = ?');
 const renameBoardStmt = db.prepare('UPDATE boards SET name = ?, updated_at = ? WHERE id = ?');
+const setBoardPasswordStmt = db.prepare('UPDATE boards SET password_hash = ?, updated_at = ? WHERE id = ?');
 const listBoardsStmt = db.prepare('SELECT id, name, created_at, updated_at FROM boards ORDER BY updated_at DESC LIMIT 100');
 
 const getUserByPhoneStmt = db.prepare('SELECT * FROM users WHERE phone = ?');
@@ -98,7 +106,7 @@ function loadBoard(id) {
   if (!row) return null;
   let shapes = [];
   try { shapes = JSON.parse(row.data); } catch (e) { shapes = []; }
-  return { id: row.id, name: row.name, shapes };
+  return { id: row.id, name: row.name, shapes, hasPassword: !!row.password_hash, passwordHash: row.password_hash };
 }
 function createBoard(name) {
   const id = nanoid(8);
@@ -290,18 +298,6 @@ app.get('/api/boards/:id', requireAuth, (req, res) => {
   if (!board) return res.status(404).json({ error: 'not_found' });
   res.json(board);
 });
-app.delete('/api/boards/:id', requireAuth, (req, res) => {
-  const id = req.params.id;
-  const existing = getBoardStmt.get(id);
-  if (!existing) return res.status(404).json({ error: 'not_found' });
-  db.prepare('DELETE FROM boards WHERE id = ?').run(id);
-  liveBoards.delete(id);
-  const pending = pendingSaves.get(id);
-  if (pending) { clearTimeout(pending); pendingSaves.delete(id); }
-  // Kick anyone currently viewing/editing this board back to the home page.
-  io.to(id).emit('board:deleted');
-  res.json({ ok: true });
-});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -315,19 +311,63 @@ app.post('/api/upload/:boardId', requireAuth, upload.single('file'), (req, res) 
   res.json({ url: '/uploads/' + req.file.filename, name: req.file.originalname });
 });
 
+// ---------- Board password protection ----------
+// Set, change, or remove a board's password. Any signed-in user currently
+// holding the link can manage this (boards have no owner concept in this
+// app), matching the existing "anyone with the link can edit" model.
+app.post('/api/boards/:id/password', requireAuth, (req, res) => {
+  const board = getBoardStmt.get(req.params.id);
+  if (!board) return res.status(404).json({ error: 'not_found' });
+  const { password } = req.body || {};
+  if (password && String(password).length > 0) {
+    if (String(password).length < 4) return res.status(400).json({ error: 'weak_password' });
+    const hash = bcrypt.hashSync(String(password), 10);
+    setBoardPasswordStmt.run(hash, Date.now(), req.params.id);
+  } else {
+    setBoardPasswordStmt.run(null, Date.now(), req.params.id);
+  }
+  // Whoever just set/changed the password already knows it, so unlock it
+  // for this session immediately.
+  req.session.unlocked = req.session.unlocked || {};
+  req.session.unlocked[req.params.id] = true;
+  res.json({ ok: true, hasPassword: !!(password && password.length) });
+});
+
+// Unlock a password-protected board for the current session (works for
+// signed-in and anonymous visitors alike - the check is per-browser-session).
+app.post('/api/boards/:id/unlock', (req, res) => {
+  const board = getBoardStmt.get(req.params.id);
+  if (!board) return res.status(404).json({ error: 'not_found' });
+  if (!board.password_hash) return res.json({ ok: true });
+  const { password } = req.body || {};
+  if (!password || !bcrypt.compareSync(String(password), board.password_hash)) {
+    return res.status(401).json({ error: 'incorrect_password' });
+  }
+  req.session.unlocked = req.session.unlocked || {};
+  req.session.unlocked[req.params.id] = true;
+  res.json({ ok: true });
+});
+
 // ---------- Pages ----------
 app.get('/login', (req, res) => {
   if (req.session && req.session.user) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.get('/board/:id', requireAuthPage, (req, res) => {
+// Board pages are viewable by anyone with the link, signed in or not -
+// signed-out visitors get a read-only view (enforced again on the socket
+// side). A board password, if set, still gates the actual content via the
+// socket "join" handshake below, not this route.
+app.get('/board/:id', (req, res) => {
   const filePath = path.join(__dirname, 'public', 'board.html');
   fs.readFile(filePath, 'utf8', (err, html) => {
     if (err) return res.status(500).send('Server error');
     // Inject the board id server-side so the client never has to parse it
     // out of the URL (avoids edge cases with trailing slashes / proxies).
-    const injected = html.replace('__BOARD_ID__', req.params.id);
+    const isAuthed = !!(req.session && req.session.user);
+    const injected = html
+      .replace('__BOARD_ID__', req.params.id)
+      .replace('__IS_AUTHED__', String(isAuthed));
     res.send(injected);
   });
 });
@@ -359,36 +399,48 @@ function currentShapesArray(boardId) {
 
 const USER_COLORS = ['#F97362', '#F2B84B', '#5FC9A8', '#5B9BD5', '#B78BE0', '#F088B6', '#7FD1D1', '#E8A75D'];
 
-io.use((socket, next) => {
-  const sess = socket.request.session;
-  if (!sess || !sess.user) return next(new Error('unauthenticated'));
-  next();
-});
-
+// No longer rejects unauthenticated sockets - signed-out visitors are
+// allowed to connect and view boards read-only. Editing is still checked
+// per-event below via socket.data.isAuth.
 io.on('connection', (socket) => {
   let joinedBoard = null;
-  const sessUser = socket.request.session.user;
+  const sess = socket.request.session;
+  const sessUser = sess && sess.user;
+  const isAuth = !!sessUser;
   const me = {
     id: socket.id,
-    name: sessUser.username,
+    name: sessUser ? sessUser.username : ('Guest ' + Math.floor(1000 + Math.random() * 9000)),
     color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
+    isAuth,
   };
   socket.data.user = me;
+  socket.data.isAuth = isAuth;
 
-  socket.on('join', ({ boardId, viewOnly }) => {
+  function isUnlocked(boardId) {
+    return !!(sess && sess.unlocked && sess.unlocked[boardId]);
+  }
+
+  socket.on('join', ({ boardId }) => {
     if (!boardId) return;
+    let board = loadBoard(boardId) || (createBoard('Untitled board'), loadBoard(boardId));
+    if (board.hasPassword && !isUnlocked(boardId)) {
+      socket.emit('board:locked', { boardId });
+      return;
+    }
     joinedBoard = boardId;
-    socket.data.viewOnly = !!viewOnly;
-    me.viewOnly = !!viewOnly;
-    const board = loadBoard(boardId) || (createBoard('Untitled board'), loadBoard(boardId));
     const live = getLive(boardId);
     socket.join(boardId);
+
+    // Read-only for anyone not signed in.
+    socket.data.readOnly = !isAuth;
 
     socket.emit('board:state', {
       boardId,
       name: board ? board.name : 'Untitled board',
       shapes: Array.from(live.shapes.values()),
       you: me,
+      readOnly: socket.data.readOnly,
+      hasPassword: board.hasPassword,
     });
     socket.to(boardId).emit('user:join', me);
 
@@ -403,13 +455,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('shape:add', (shape) => {
-    if (!joinedBoard || !shape || !shape.id || socket.data.viewOnly) return;
+    if (!joinedBoard || socket.data.readOnly || !shape || !shape.id) return;
     getLive(joinedBoard).shapes.set(shape.id, shape);
     socket.to(joinedBoard).emit('shape:add', shape);
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('shape:update', (partial) => {
-    if (!joinedBoard || !partial || !partial.id || socket.data.viewOnly) return;
+    if (!joinedBoard || socket.data.readOnly || !partial || !partial.id) return;
     const live = getLive(joinedBoard);
     const existing = live.shapes.get(partial.id);
     if (existing) Object.assign(existing, partial); else live.shapes.set(partial.id, partial);
@@ -417,13 +469,13 @@ io.on('connection', (socket) => {
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('shape:delete', ({ id }) => {
-    if (!joinedBoard || !id || socket.data.viewOnly) return;
+    if (!joinedBoard || socket.data.readOnly || !id) return;
     getLive(joinedBoard).shapes.delete(id);
     socket.to(joinedBoard).emit('shape:delete', { id });
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('shapes:bulk', ({ add = [], update = [], del = [] }) => {
-    if (!joinedBoard || socket.data.viewOnly) return;
+    if (!joinedBoard || socket.data.readOnly) return;
     const live = getLive(joinedBoard);
     for (const s of add) live.shapes.set(s.id, s);
     for (const p of update) {
@@ -435,7 +487,7 @@ io.on('connection', (socket) => {
     scheduleSave(joinedBoard, () => currentShapesArray(joinedBoard));
   });
   socket.on('board:rename', (name) => {
-    if (!joinedBoard || !name || socket.data.viewOnly) return;
+    if (!joinedBoard || socket.data.readOnly || !name) return;
     renameBoardStmt.run(name.slice(0, 100), Date.now(), joinedBoard);
     socket.to(joinedBoard).emit('board:rename', name.slice(0, 100));
   });

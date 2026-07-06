@@ -11,10 +11,10 @@
   <div id="topbar">
     <a href="/" class="home-link" title="All boards">⌂</a>
     <input id="board-name" class="board-name-input" maxlength="60" />
-    <span id="view-only-badge" class="view-only-badge" hidden>Viewing only</span>
+    <span id="readonly-badge" class="readonly-badge" hidden>View only</span>
     <div id="presence" class="presence"></div>
+    <a id="signin-link" class="pill-btn" href="/login" style="text-decoration:none;display:none;">Sign in to edit</a>
     <button id="share-btn" class="pill-btn">Share</button>
-    <button id="delete-board-btn" class="pill-btn" title="Delete board" style="background:transparent;border:1px solid #F97362;color:#F97362;">Delete</button>
     <button id="logout-btn" class="pill-btn" style="background:transparent;border:1px solid var(--peri);color:var(--paper);">Log out</button>
   </div>
 
@@ -29,34 +29,21 @@
     <button data-tool="hand" class="tool-btn" title="Pan (H)">✋</button>
     <div class="tool-sep"></div>
     <button data-tool="pen" class="tool-btn" title="Pen (P)">✏</button>
-    <button data-tool="highlighter" class="tool-btn" title="Highlighter (M)">🖍</button>
-    <button data-tool="eraser" class="tool-btn" title="Eraser (E)">⌫</button>
-    <div class="tool-sep"></div>
     <button data-tool="rect" class="tool-btn" title="Rectangle (R)">▭</button>
     <button data-tool="ellipse" class="tool-btn" title="Ellipse (O)">◯</button>
-    <button data-tool="triangle" class="tool-btn" title="Triangle (G)">△</button>
-    <button data-tool="diamond" class="tool-btn" title="Diamond (D)">◇</button>
-    <button data-tool="hexagon" class="tool-btn" title="Hexagon (X)">⬡</button>
-    <button data-tool="star" class="tool-btn" title="Star (J)">★</button>
-    <div class="tool-sep"></div>
     <button data-tool="line" class="tool-btn" title="Line (L)">╱</button>
     <button data-tool="arrow" class="tool-btn" title="Arrow (A)">↗</button>
-    <div class="tool-sep"></div>
     <button data-tool="sticky" class="tool-btn" title="Sticky note (S)">▥</button>
     <button data-tool="text" class="tool-btn" title="Text (T)">A</button>
     <div class="tool-sep"></div>
     <button id="upload-btn" class="tool-btn" title="Upload image or PDF (U)">⇧</button>
     <input id="file-input" type="file" accept="image/*,application/pdf" multiple hidden />
+    <div class="tool-sep"></div>
+    <button id="export-btn" class="tool-btn" title="Export board as image or PDF">⤓</button>
   </div>
 
   <div id="color-bar" class="floating-bar" hidden>
     <div class="swatches" id="swatches"></div>
-    <div class="bar-sep"></div>
-    <div class="widths" id="widths">
-      <button class="width-btn" data-width="2" title="Thin"><span class="dot dot-s"></span></button>
-      <button class="width-btn active" data-width="3" title="Medium"><span class="dot dot-m"></span></button>
-      <button class="width-btn" data-width="6" title="Thick"><span class="dot dot-l"></span></button>
-    </div>
   </div>
 
   <div id="zoom-bar" class="floating-bar zoom-bar">
@@ -74,45 +61,53 @@
   <div id="share-modal" class="modal" hidden>
     <div class="modal-card">
       <h3>Share this board</h3>
-      <p>Choose which kind of link to hand out. Both stay live in real time.</p>
-
-      <div class="share-block">
-        <div class="share-block-label">✎ Can edit</div>
-        <p class="share-block-desc">They can draw, move things, and it updates for everyone instantly.</p>
-        <div class="share-row">
-          <input id="share-link-edit" readonly />
-          <button id="copy-link-edit">Copy</button>
-        </div>
+      <p>Anyone with this link can view it. Signed-in visitors can edit.</p>
+      <div class="share-row">
+        <input id="share-link" readonly />
+        <button id="copy-link">Copy</button>
       </div>
-
-      <div class="share-block">
-        <div class="share-block-label">👁 Can view only</div>
-        <p class="share-block-desc">They watch everything live, but can't draw or change anything.</p>
-        <div class="share-row">
-          <input id="share-link-view" readonly />
-          <button id="copy-link-view">Copy</button>
-        </div>
-      </div>
-
       <p class="board-id-label">Board ID: <b id="share-id"></b></p>
+
+      <div class="protect-section">
+        <p class="protect-label" id="protect-status">Protect this board with a password</p>
+        <div class="share-row">
+          <input id="protect-password" type="password" placeholder="Set a password" autocomplete="new-password" />
+          <button id="protect-save">Save</button>
+        </div>
+        <button id="protect-remove" class="btn-close" hidden>Remove password</button>
+        <p class="protect-error" id="protect-error" hidden></p>
+      </div>
+
       <button id="close-share" class="btn-close">Done</button>
     </div>
   </div>
 
-  <div id="delete-modal" class="modal" hidden>
+  <div id="lock-modal" class="modal" hidden>
     <div class="modal-card">
-      <h3>Delete this board?</h3>
-      <p>This permanently deletes "<span id="delete-board-name"></span>" for everyone. This can't be undone.</p>
-      <div class="share-row" style="margin-top:4px;">
-        <button id="cancel-delete" class="btn-close" style="width:50%;">Cancel</button>
-        <button id="confirm-delete" class="btn-danger" style="width:50%;">Delete board</button>
+      <h3>Password protected</h3>
+      <p>This board is locked. Enter the password to continue.</p>
+      <div class="share-row">
+        <input id="lock-password" type="password" placeholder="Password" />
+        <button id="lock-submit">Unlock</button>
       </div>
+      <p class="protect-error" id="lock-error" hidden></p>
     </div>
   </div>
 
-  <script>window.BOARD_ID = "__BOARD_ID__";</script>
+  <div id="export-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>Save a snapshot</h3>
+      <p>Captures the whole board, not just what's on screen.</p>
+      <button id="export-png" class="btn-close" style="background:var(--lime);color:#12141c;border:none;margin-bottom:10px;">Save as Image (PNG)</button>
+      <button id="export-pdf" class="btn-close" style="background:var(--lime);color:#12141c;border:none;margin-bottom:10px;">Save as PDF</button>
+      <button id="close-export" class="btn-close">Cancel</button>
+    </div>
+  </div>
+
+  <script>window.BOARD_ID = "__BOARD_ID__"; window.IS_AUTHED = __IS_AUTHED__;</script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="/board.js"></script>
 </body>
 </html>
