@@ -78,3 +78,4 @@ public/
 data/               SQLite DB + uploaded files (created at runtime)
 ```
 # miroboard
+# miroboard
