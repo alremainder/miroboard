@@ -18,7 +18,7 @@ services:
         value: /data
       - key: SESSION_SECRET
         generateValue: true
-      - key: RESEND_API_KEY
+      - key: TEXTLK_API_TOKEN
         sync: false
-      - key: MAIL_FROM
+      - key: TEXTLK_SENDER_ID
         sync: false

@@ -28,12 +28,12 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    phone TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     created_at INTEGER
   );
   CREATE TABLE IF NOT EXISTS otp_codes (
-    email TEXT PRIMARY KEY,
+    phone TEXT PRIMARY KEY,
     code TEXT NOT NULL,
     purpose TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -41,6 +41,34 @@ db.exec(`
     last_sent INTEGER NOT NULL
   );
 `);
+
+// One-time migration: earlier versions of this app used email/OTP-by-email.
+// If an old database with an "email" column is found, rebuild the auth
+// tables for the new phone-based flow. Boards are untouched; only accounts
+// and pending OTPs are reset (fine pre-launch, before real users exist).
+const usersCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+if (!usersCols.includes('phone')) {
+  console.warn('Migrating users/otp_codes tables to phone-based auth (old data cleared).');
+  db.exec(`
+    DROP TABLE IF EXISTS users;
+    DROP TABLE IF EXISTS otp_codes;
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      phone TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at INTEGER
+    );
+    CREATE TABLE otp_codes (
+      phone TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_sent INTEGER NOT NULL
+    );
+  `);
+}
 
 const getBoardStmt = db.prepare('SELECT * FROM boards WHERE id = ?');
 const insertBoardStmt = db.prepare(
@@ -50,20 +78,20 @@ const updateBoardStmt = db.prepare('UPDATE boards SET data = ?, updated_at = ? W
 const renameBoardStmt = db.prepare('UPDATE boards SET name = ?, updated_at = ? WHERE id = ?');
 const listBoardsStmt = db.prepare('SELECT id, name, created_at, updated_at FROM boards ORDER BY updated_at DESC LIMIT 100');
 
-const getUserByEmailStmt = db.prepare('SELECT * FROM users WHERE email = ?');
+const getUserByPhoneStmt = db.prepare('SELECT * FROM users WHERE phone = ?');
 const getUserByUsernameStmt = db.prepare('SELECT * FROM users WHERE username = ?');
 const insertUserStmt = db.prepare(
-  'INSERT INTO users (id, username, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)'
+  'INSERT INTO users (id, username, phone, password_hash, created_at) VALUES (?, ?, ?, ?, ?)'
 );
 const upsertOtpStmt = db.prepare(`
-  INSERT INTO otp_codes (email, code, purpose, expires_at, attempts, last_sent)
+  INSERT INTO otp_codes (phone, code, purpose, expires_at, attempts, last_sent)
   VALUES (?, ?, ?, ?, 0, ?)
-  ON CONFLICT(email) DO UPDATE SET code=excluded.code, purpose=excluded.purpose,
+  ON CONFLICT(phone) DO UPDATE SET code=excluded.code, purpose=excluded.purpose,
     expires_at=excluded.expires_at, attempts=0, last_sent=excluded.last_sent
 `);
-const getOtpStmt = db.prepare('SELECT * FROM otp_codes WHERE email = ?');
-const bumpOtpAttemptsStmt = db.prepare('UPDATE otp_codes SET attempts = attempts + 1 WHERE email = ?');
-const deleteOtpStmt = db.prepare('DELETE FROM otp_codes WHERE email = ?');
+const getOtpStmt = db.prepare('SELECT * FROM otp_codes WHERE phone = ?');
+const bumpOtpAttemptsStmt = db.prepare('UPDATE otp_codes SET attempts = attempts + 1 WHERE phone = ?');
+const deleteOtpStmt = db.prepare('DELETE FROM otp_codes WHERE phone = ?');
 
 function loadBoard(id) {
   const row = getBoardStmt.get(id);
@@ -90,74 +118,60 @@ function scheduleSave(boardId, shapesGetter) {
 }
 
 // ---------- Mailer ----------
-// Uses Resend's HTTP API to send email (https://resend.com). This works on
-// hosts like Render's free tier that block outbound SMTP ports (25/465/587) -
-// raw SMTP to Gmail will hang and time out there, but a normal HTTPS call
-// like this one is unaffected.
-//
-// Set these in Render's dashboard under Environment (never commit them):
-//   RESEND_API_KEY = your Resend API key (https://resend.com/api-keys)
-//   MAIL_FROM      = the "from" address to send as. If you haven't verified
-//                     your own domain on Resend yet, use their shared testing
-//                     sender: "Boards <onboarding@resend.dev>"
-const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const MAIL_FROM = process.env.MAIL_FROM || 'Boards <onboarding@resend.dev>';
-if (!RESEND_API_KEY) {
-  console.warn('RESEND_API_KEY not set - OTP emails will be logged to console instead of sent.');
+// ---------- SMS (OTP) ----------
+// Sends OTP codes via text.lk's HTTP API (https://text.lk) - Sri Lankan
+// numbers only. Set these in Render's dashboard under Environment (never
+// commit real values to the repo):
+//   TEXTLK_API_TOKEN = your text.lk API token (Settings -> API)
+//   TEXTLK_SENDER_ID  = an approved sender ID, e.g. "TextLKDemo" for testing
+const TEXTLK_API_TOKEN = process.env.TEXTLK_API_TOKEN || '';
+const TEXTLK_SENDER_ID = process.env.TEXTLK_SENDER_ID || 'TextLKDemo';
+if (!TEXTLK_API_TOKEN) {
+  console.warn('TEXTLK_API_TOKEN not set - OTP codes will be logged to console instead of texted.');
 }
 
-function otpEmailHtml(code) {
-  return `
-  <div style="background:#12141c;padding:40px 20px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
-    <div style="max-width:420px;margin:0 auto;background:#1b1e2a;border-radius:16px;padding:36px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:28px;">
-        <span style="width:12px;height:12px;border-radius:3px;background:#c8ff4d;display:inline-block;transform:rotate(12deg);"></span>
-        <span style="font-size:18px;font-weight:700;color:#f4f3ef;">Boards</span>
-      </div>
-      <h1 style="color:#f4f3ef;font-size:20px;margin:0 0 12px;">Your verification code</h1>
-      <p style="color:rgba(244,243,239,0.65);font-size:14px;line-height:1.6;margin:0 0 24px;">
-        Enter this code to verify your email and finish setting up your account.
-        It expires in 10 minutes.
-      </p>
-      <div style="background:#262b3a;border-radius:10px;padding:20px;text-align:center;margin-bottom:24px;">
-        <span style="font-size:34px;font-weight:700;letter-spacing:10px;color:#c8ff4d;font-family:monospace;">${code}</span>
-      </div>
-      <p style="color:rgba(244,243,239,0.4);font-size:12px;line-height:1.6;margin:0;">
-        If you didn't request this, you can safely ignore this email.
-      </p>
-    </div>
-  </div>`;
+// Accepts Sri Lankan mobile numbers in common forms - 0712345678,
+// +94712345678, 94712345678, 0094712345678, or bare 712345678 - and
+// normalizes to the "94712345678" format text.lk expects. Returns null if
+// the number isn't a valid Sri Lankan mobile number.
+function normalizeLkPhone(input) {
+  let digits = String(input || '').replace(/[^\d]/g, '');
+  if (digits.startsWith('0094')) digits = digits.slice(2);
+  else if (digits.startsWith('94')) { /* already has country code */ }
+  else if (digits.startsWith('0')) digits = '94' + digits.slice(1);
+  else if (digits.length === 9) digits = '94' + digits;
+
+  // 94 + 7[0-8] + 7 more digits = 11 digits total, e.g. 94712345678
+  return /^947[0-8]\d{7}$/.test(digits) ? digits : null;
 }
 
-async function sendOtpEmail(email, code) {
-  if (!RESEND_API_KEY) {
-    console.log(`[DEV] OTP for ${email}: ${code}`);
+async function sendOtpSms(phone, code) {
+  if (!TEXTLK_API_TOKEN) {
+    console.log(`[DEV] OTP for ${phone}: ${code}`);
     return;
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
-  let res;
+  let res, data;
   try {
-    res = await fetch('https://api.resend.com/emails', {
+    res = await fetch('https://app.text.lk/api/http/sms/send', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
-        from: MAIL_FROM,
-        to: [email],
-        subject: `${code} is your Boards verification code`,
-        html: otpEmailHtml(code),
+        api_token: TEXTLK_API_TOKEN,
+        recipient: phone,
+        sender_id: TEXTLK_SENDER_ID,
+        type: 'plain',
+        message: `${code} is your Boards verification code. It expires in 10 minutes.`,
       }),
       signal: controller.signal,
     });
+    data = await res.json().catch(() => ({}));
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Resend API error ${res.status}: ${body}`);
+  if (!res.ok || data.status !== 'success') {
+    throw new Error(`text.lk API error ${res.status}: ${data.message || JSON.stringify(data)}`);
   }
 }
 
@@ -192,65 +206,69 @@ function requireAuthPage(req, res, next) {
 
 // ---------- Auth API ----------
 app.post('/api/auth/request-otp', async (req, res) => {
-  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
+  const phone = normalizeLkPhone(req.body && req.body.phone);
+  if (!phone) return res.status(400).json({ error: 'invalid_phone' });
 
-  const existing = getOtpStmt.get(email);
+  const existing = getOtpStmt.get(phone);
   if (existing && Date.now() - existing.last_sent < 45 * 1000) {
     return res.status(429).json({ error: 'rate_limited', retryAfterMs: 45000 - (Date.now() - existing.last_sent) });
   }
   const code = genOtp();
   const expires = Date.now() + 10 * 60 * 1000;
-  upsertOtpStmt.run(email, code, 'signup', expires, Date.now());
+  upsertOtpStmt.run(phone, code, 'signup', expires, Date.now());
   try {
-    await sendOtpEmail(email, code);
+    await sendOtpSms(phone, code);
     res.json({ ok: true });
   } catch (e) {
-    console.error('Failed to send OTP email', e);
-    res.status(500).json({ error: 'email_failed' });
+    console.error('Failed to send OTP SMS', e);
+    res.status(500).json({ error: 'sms_failed' });
   }
 });
 
 app.post('/api/auth/signup', (req, res) => {
-  const { username, email: rawEmail, password, otp } = req.body || {};
-  const email = String(rawEmail || '').trim().toLowerCase();
+  const { username, phone: rawPhone, password, otp } = req.body || {};
+  const phone = normalizeLkPhone(rawPhone);
   if (!username || username.length < 3) return res.status(400).json({ error: 'invalid_username' });
+  if (!phone) return res.status(400).json({ error: 'invalid_phone' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'weak_password' });
   if (!otp) return res.status(400).json({ error: 'otp_required' });
 
-  const record = getOtpStmt.get(email);
+  const record = getOtpStmt.get(phone);
   if (!record) return res.status(400).json({ error: 'otp_not_requested' });
   if (record.attempts >= 6) return res.status(429).json({ error: 'too_many_attempts' });
   if (Date.now() > record.expires_at) return res.status(400).json({ error: 'otp_expired' });
   if (record.code !== String(otp).trim()) {
-    bumpOtpAttemptsStmt.run(email);
+    bumpOtpAttemptsStmt.run(phone);
     return res.status(400).json({ error: 'otp_incorrect' });
   }
 
-  if (getUserByEmailStmt.get(email)) return res.status(409).json({ error: 'email_taken' });
+  if (getUserByPhoneStmt.get(phone)) return res.status(409).json({ error: 'phone_taken' });
   if (getUserByUsernameStmt.get(username)) return res.status(409).json({ error: 'username_taken' });
 
   const id = nanoid(12);
   const hash = bcrypt.hashSync(password, 10);
-  insertUserStmt.run(id, username, email, hash, Date.now());
-  deleteOtpStmt.run(email);
+  insertUserStmt.run(id, username, phone, hash, Date.now());
+  deleteOtpStmt.run(phone);
 
-  req.session.user = { id, username, email };
-  res.json({ ok: true, user: { username, email } });
+  req.session.user = { id, username, phone };
+  res.json({ ok: true, user: { username, phone } });
 });
 
 app.post('/api/auth/login', (req, res) => {
   const { identifier, password } = req.body || {};
   if (!identifier || !password) return res.status(400).json({ error: 'missing_fields' });
   const id = String(identifier).trim();
-  const user = id.includes('@')
-    ? getUserByEmailStmt.get(id.toLowerCase())
+  // If it looks like a phone number (mostly digits/+/spaces), look up by
+  // normalized phone; otherwise treat it as a username.
+  const looksLikePhone = /^[\d+\s-]+$/.test(id);
+  const user = looksLikePhone
+    ? (normalizeLkPhone(id) ? getUserByPhoneStmt.get(normalizeLkPhone(id)) : null)
     : getUserByUsernameStmt.get(id);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'invalid_credentials' });
   }
-  req.session.user = { id: user.id, username: user.username, email: user.email };
-  res.json({ ok: true, user: { username: user.username, email: user.email } });
+  req.session.user = { id: user.id, username: user.username, phone: user.phone };
+  res.json({ ok: true, user: { username: user.username, phone: user.phone } });
 });
 
 app.post('/api/auth/logout', (req, res) => {

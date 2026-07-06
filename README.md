@@ -26,27 +26,31 @@ library, mind-map/flowchart auto-layout, comment threads, frames & presentation
 mode, permission/roles management. The architecture (Socket.IO rooms + one
 shapes table) makes these addable later without a redesign.
 
-## Authentication & email OTP
+## Authentication & phone OTP
 
 Signup/login is now required to use the app (`/login`). New accounts verify
-their email with a 6-digit code before the account is created.
+a Sri Lankan mobile number with a 6-digit code (sent via SMS) before the
+account is created. Email is not used anywhere in the auth flow.
 
 **Set these environment variables** (locally via a `.env` you load yourself,
 or in Render's dashboard under **Environment** — never commit real secrets
 to the repo):
 
-- `SMTP_USER` — the Gmail address to send OTP emails from
-- `SMTP_PASS` — a Gmail **App Password** (Google Account → Security → 2-Step
-  Verification → App passwords). Regular Gmail passwords won't work here.
+- `TEXTLK_API_TOKEN` — your API token from [text.lk](https://text.lk) (Settings → API)
+- `TEXTLK_SENDER_ID` — an approved sender ID. `TextLKDemo` works for testing;
+  production apps need their own approved sender ID from text.lk
 - `SESSION_SECRET` — any long random string (Render's blueprint auto-generates one)
 
-If `SMTP_USER`/`SMTP_PASS` aren't set, the server logs the OTP code to the
-console instead of emailing it — handy for local testing without touching
-real credentials.
+If `TEXTLK_API_TOKEN` isn't set, the server logs the OTP code to the console
+instead of texting it — handy for local testing without touching real
+credentials.
 
-> Security note: if a Gmail app password is ever pasted into a chat, doc, or
-> commit, treat it as compromised and generate a fresh one — app passwords
-> are trivial to revoke and replace at myaccount.google.com/apppasswords.
+Only Sri Lankan mobile numbers are accepted (07XXXXXXXX, +947XXXXXXXX, etc. —
+all normalized to text.lk's `94XXXXXXXXX` format server-side).
+
+> Security note: if a text.lk API token is ever pasted into a chat, doc, or
+> commit, treat it as compromised and generate a fresh one from your text.lk
+> dashboard.
 
 ## Run locally
 

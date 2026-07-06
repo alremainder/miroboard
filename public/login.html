@@ -37,26 +37,26 @@
       <!-- LOGIN -->
       <section id="login-panel" class="panel">
         <h1>Welcome back</h1>
-        <p>Log in with your username or email.</p>
-        <input id="login-id" type="text" placeholder="Username or email" />
+        <p>Log in with your username or phone number.</p>
+        <input id="login-id" type="text" placeholder="Username or phone number" />
         <input id="login-pass" type="password" placeholder="Password" />
         <div class="error-msg" id="login-error"></div>
         <button id="login-btn" class="btn-primary">Log in →</button>
       </section>
 
-      <!-- SIGNUP: step 1 email + otp -->
+      <!-- SIGNUP: step 1 phone + otp -->
       <section id="signup-panel" class="panel" hidden>
-        <div class="step active" id="signup-step-email">
+        <div class="step active" id="signup-step-phone">
           <h1>Create your account</h1>
-          <p>We'll email you a 6-digit code to verify it's really you.</p>
-          <input id="signup-email" type="email" placeholder="Email address" />
-          <div class="error-msg" id="signup-email-error"></div>
+          <p>We'll text you a 6-digit code to verify it's really you. Sri Lankan mobile numbers only.</p>
+          <input id="signup-phone" type="tel" placeholder="07XXXXXXXX" />
+          <div class="error-msg" id="signup-phone-error"></div>
           <button id="send-otp-btn" class="btn-primary">Send code →</button>
         </div>
 
         <div class="step" id="signup-step-otp">
-          <h1>Check your inbox</h1>
-          <p>Enter the 6-digit code we sent to <b id="otp-email-label"></b>.</p>
+          <h1>Check your messages</h1>
+          <p>Enter the 6-digit code we texted to <b id="otp-phone-label"></b>.</p>
           <input id="otp-code" class="otp-input" type="text" inputmode="numeric" maxlength="6" placeholder="------" />
           <div class="error-msg" id="otp-error"></div>
           <input id="signup-username" type="text" placeholder="Choose a username" />

@@ -42,7 +42,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   try {
     const { ok, data } = await postJson('/api/auth/login', { identifier, password });
     if (!ok) {
-      errEl.textContent = data.error === 'invalid_credentials' ? 'Incorrect username/email or password.' : 'Something went wrong. Try again.';
+      errEl.textContent = data.error === 'invalid_credentials' ? 'Incorrect username/phone or password.' : 'Something went wrong. Try again.';
       return;
     }
     window.location.href = '/';
@@ -53,25 +53,36 @@ document.getElementById('login-btn').addEventListener('click', async () => {
 document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
 
 // ---- signup: step 1, send otp ----
+// Mirrors the server's normalizeLkPhone() logic for a quick client-side check
+// before hitting the network; the server is still the source of truth.
+function isValidLkPhone(input) {
+  let digits = String(input || '').replace(/[^\d]/g, '');
+  if (digits.startsWith('0094')) digits = digits.slice(2);
+  else if (digits.startsWith('94')) { /* already has country code */ }
+  else if (digits.startsWith('0')) digits = '94' + digits.slice(1);
+  else if (digits.length === 9) digits = '94' + digits;
+  return /^947[0-8]\d{7}$/.test(digits);
+}
+
 let cooldownTimer = null;
 async function sendOtp() {
-  const email = document.getElementById('signup-email').value.trim();
-  const errEl = document.getElementById('signup-email-error');
+  const phone = document.getElementById('signup-phone').value.trim();
+  const errEl = document.getElementById('signup-phone-error');
   errEl.textContent = '';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Enter a valid email address.'; return; }
+  if (!isValidLkPhone(phone)) { errEl.textContent = 'Enter a valid Sri Lankan mobile number.'; return; }
   const btn = document.getElementById('send-otp-btn');
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
-    const { ok, status, data } = await postJson('/api/auth/request-otp', { email });
+    const { ok, status, data } = await postJson('/api/auth/request-otp', { phone });
     if (!ok) {
       if (status === 429) errEl.textContent = 'Please wait a bit before requesting another code.';
       else if (data.error === 'timeout') errEl.textContent = 'That took too long. Please try again.';
       else if (data.error === 'network_error') errEl.textContent = 'Network error — check your connection and try again.';
-      else errEl.textContent = 'Could not send the code. Check the email and try again.';
+      else errEl.textContent = 'Could not send the code. Check the number and try again.';
       return;
     }
-    document.getElementById('otp-email-label').textContent = email;
-    document.getElementById('signup-step-email').classList.remove('active');
+    document.getElementById('otp-phone-label').textContent = phone;
+    document.getElementById('signup-step-phone').classList.remove('active');
     document.getElementById('signup-step-otp').classList.add('active');
   } finally {
     btn.disabled = false; btn.textContent = 'Send code →';
@@ -82,7 +93,7 @@ document.getElementById('resend-link').addEventListener('click', (e) => { e.prev
 
 // ---- signup: step 2, verify + create account ----
 document.getElementById('create-account-btn').addEventListener('click', async () => {
-  const email = document.getElementById('signup-email').value.trim();
+  const phone = document.getElementById('signup-phone').value.trim();
   const otp = document.getElementById('otp-code').value.trim();
   const username = document.getElementById('signup-username').value.trim();
   const password = document.getElementById('signup-password').value;
@@ -97,14 +108,14 @@ document.getElementById('create-account-btn').addEventListener('click', async ()
   const btn = document.getElementById('create-account-btn');
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
-    const { ok, data } = await postJson('/api/auth/signup', { username, email, password, otp });
+    const { ok, data } = await postJson('/api/auth/signup', { username, phone, password, otp });
     if (!ok) {
       const messages = {
         otp_incorrect: 'That code is incorrect.',
         otp_expired: 'That code expired — request a new one.',
         otp_not_requested: 'Request a code first.',
         too_many_attempts: 'Too many attempts — request a new code.',
-        email_taken: 'An account with that email already exists.',
+        phone_taken: 'An account with that phone number already exists.',
         username_taken: 'That username is taken.',
         timeout: 'That took too long. Please try again.',
         network_error: 'Network error — check your connection and try again.',
