@@ -10,14 +10,24 @@ tabs.forEach(btn => btn.addEventListener('click', () => {
   signupPanel.hidden = mode !== 'signup';
 }));
 
-async function postJson(url, body) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+async function postJson(url, body, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  } catch (e) {
+    // Network error or timeout - surface as a failed request instead of hanging forever.
+    return { ok: false, status: 0, data: { error: e.name === 'AbortError' ? 'timeout' : 'network_error' } };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---- login ----
@@ -27,12 +37,18 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   const errEl = document.getElementById('login-error');
   errEl.textContent = '';
   if (!identifier || !password) { errEl.textContent = 'Please fill in both fields.'; return; }
-  const { ok, data } = await postJson('/api/auth/login', { identifier, password });
-  if (!ok) {
-    errEl.textContent = data.error === 'invalid_credentials' ? 'Incorrect username/email or password.' : 'Something went wrong. Try again.';
-    return;
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true; btn.textContent = 'Logging in…';
+  try {
+    const { ok, data } = await postJson('/api/auth/login', { identifier, password });
+    if (!ok) {
+      errEl.textContent = data.error === 'invalid_credentials' ? 'Incorrect username/email or password.' : 'Something went wrong. Try again.';
+      return;
+    }
+    window.location.href = '/';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Log in →';
   }
-  window.location.href = '/';
 });
 document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
 
@@ -45,16 +61,21 @@ async function sendOtp() {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Enter a valid email address.'; return; }
   const btn = document.getElementById('send-otp-btn');
   btn.disabled = true; btn.textContent = 'Sending…';
-  const { ok, status, data } = await postJson('/api/auth/request-otp', { email });
-  btn.disabled = false; btn.textContent = 'Send code →';
-  if (!ok) {
-    if (status === 429) errEl.textContent = 'Please wait a bit before requesting another code.';
-    else errEl.textContent = 'Could not send the code. Check the email and try again.';
-    return;
+  try {
+    const { ok, status, data } = await postJson('/api/auth/request-otp', { email });
+    if (!ok) {
+      if (status === 429) errEl.textContent = 'Please wait a bit before requesting another code.';
+      else if (data.error === 'timeout') errEl.textContent = 'That took too long. Please try again.';
+      else if (data.error === 'network_error') errEl.textContent = 'Network error — check your connection and try again.';
+      else errEl.textContent = 'Could not send the code. Check the email and try again.';
+      return;
+    }
+    document.getElementById('otp-email-label').textContent = email;
+    document.getElementById('signup-step-email').classList.remove('active');
+    document.getElementById('signup-step-otp').classList.add('active');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send code →';
   }
-  document.getElementById('otp-email-label').textContent = email;
-  document.getElementById('signup-step-email').classList.remove('active');
-  document.getElementById('signup-step-otp').classList.add('active');
 }
 document.getElementById('send-otp-btn').addEventListener('click', sendOtp);
 document.getElementById('resend-link').addEventListener('click', (e) => { e.preventDefault(); sendOtp(); });
@@ -75,20 +96,24 @@ document.getElementById('create-account-btn').addEventListener('click', async ()
 
   const btn = document.getElementById('create-account-btn');
   btn.disabled = true; btn.textContent = 'Creating…';
-  const { ok, data } = await postJson('/api/auth/signup', { username, email, password, otp });
-  btn.disabled = false; btn.textContent = 'Create account →';
-
-  if (!ok) {
-    const messages = {
-      otp_incorrect: 'That code is incorrect.',
-      otp_expired: 'That code expired — request a new one.',
-      otp_not_requested: 'Request a code first.',
-      too_many_attempts: 'Too many attempts — request a new code.',
-      email_taken: 'An account with that email already exists.',
-      username_taken: 'That username is taken.',
-    };
-    (messages[data.error] ? otpErr : err).textContent = messages[data.error] || 'Something went wrong. Try again.';
-    return;
+  try {
+    const { ok, data } = await postJson('/api/auth/signup', { username, email, password, otp });
+    if (!ok) {
+      const messages = {
+        otp_incorrect: 'That code is incorrect.',
+        otp_expired: 'That code expired — request a new one.',
+        otp_not_requested: 'Request a code first.',
+        too_many_attempts: 'Too many attempts — request a new code.',
+        email_taken: 'An account with that email already exists.',
+        username_taken: 'That username is taken.',
+        timeout: 'That took too long. Please try again.',
+        network_error: 'Network error — check your connection and try again.',
+      };
+      (messages[data.error] ? otpErr : err).textContent = messages[data.error] || 'Something went wrong. Try again.';
+      return;
+    }
+    window.location.href = '/';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create account →';
   }
-  window.location.href = '/';
 });

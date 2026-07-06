@@ -100,6 +100,11 @@ if (process.env.SMTP_USER && process.env.SMTP_PASS) {
   transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    // Without these, a blocked/slow connection to Gmail can hang the request
+    // indefinitely, which is what makes the "Sending…" button appear stuck.
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 } else {
   console.warn('SMTP_USER / SMTP_PASS not set - OTP emails will be logged to console instead of sent.');
