@@ -8,7 +8,6 @@ const Database = require('better-sqlite3');
 const { nanoid } = require('nanoid');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
 
 // ---------- Storage setup (file-based, no external DB) ----------
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -91,23 +90,20 @@ function scheduleSave(boardId, shapesGetter) {
 }
 
 // ---------- Mailer ----------
-// Reads credentials from environment variables ONLY (set these in Render's
-// dashboard under Environment, never commit them to the repo):
-//   SMTP_USER = your gmail address
-//   SMTP_PASS = a gmail "app password" (Google Account -> Security -> App passwords)
-let transporter = null;
-if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-  transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    // Without these, a blocked/slow connection to Gmail can hang the request
-    // indefinitely, which is what makes the "Sending…" button appear stuck.
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
-} else {
-  console.warn('SMTP_USER / SMTP_PASS not set - OTP emails will be logged to console instead of sent.');
+// Uses Resend's HTTP API to send email (https://resend.com). This works on
+// hosts like Render's free tier that block outbound SMTP ports (25/465/587) -
+// raw SMTP to Gmail will hang and time out there, but a normal HTTPS call
+// like this one is unaffected.
+//
+// Set these in Render's dashboard under Environment (never commit them):
+//   RESEND_API_KEY = your Resend API key (https://resend.com/api-keys)
+//   MAIL_FROM      = the "from" address to send as. If you haven't verified
+//                     your own domain on Resend yet, use their shared testing
+//                     sender: "Boards <onboarding@resend.dev>"
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const MAIL_FROM = process.env.MAIL_FROM || 'Boards <onboarding@resend.dev>';
+if (!RESEND_API_KEY) {
+  console.warn('RESEND_API_KEY not set - OTP emails will be logged to console instead of sent.');
 }
 
 function otpEmailHtml(code) {
@@ -134,16 +130,35 @@ function otpEmailHtml(code) {
 }
 
 async function sendOtpEmail(email, code) {
-  if (!transporter) {
+  if (!RESEND_API_KEY) {
     console.log(`[DEV] OTP for ${email}: ${code}`);
     return;
   }
-  await transporter.sendMail({
-    from: `"Boards" <${process.env.SMTP_USER}>`,
-    to: email,
-    subject: `${code} is your Boards verification code`,
-    html: otpEmailHtml(code),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  let res;
+  try {
+    res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: MAIL_FROM,
+        to: [email],
+        subject: `${code} is your Boards verification code`,
+        html: otpEmailHtml(code),
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Resend API error ${res.status}: ${body}`);
+  }
 }
 
 function genOtp() { return String(Math.floor(100000 + Math.random() * 900000)); }
