@@ -24,6 +24,15 @@ function joinBoard() {
   window.location.href = '/board/' + id;
 }
 
+fetch('/api/auth/me').then(r => r.json()).then(({ user }) => {
+  document.getElementById('whoami').textContent = user ? `Signed in as ${user.username}` : '';
+}).catch(() => {});
+document.getElementById('logout-link').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+});
+
 document.getElementById('create-btn').addEventListener('click', createBoard);
 document.getElementById('join-btn').addEventListener('click', joinBoard);
 document.getElementById('join-id').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinBoard(); });

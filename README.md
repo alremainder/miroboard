@@ -26,6 +26,28 @@ library, mind-map/flowchart auto-layout, comment threads, frames & presentation
 mode, permission/roles management. The architecture (Socket.IO rooms + one
 shapes table) makes these addable later without a redesign.
 
+## Authentication & email OTP
+
+Signup/login is now required to use the app (`/login`). New accounts verify
+their email with a 6-digit code before the account is created.
+
+**Set these environment variables** (locally via a `.env` you load yourself,
+or in Render's dashboard under **Environment** — never commit real secrets
+to the repo):
+
+- `SMTP_USER` — the Gmail address to send OTP emails from
+- `SMTP_PASS` — a Gmail **App Password** (Google Account → Security → 2-Step
+  Verification → App passwords). Regular Gmail passwords won't work here.
+- `SESSION_SECRET` — any long random string (Render's blueprint auto-generates one)
+
+If `SMTP_USER`/`SMTP_PASS` aren't set, the server logs the OTP code to the
+console instead of emailing it — handy for local testing without touching
+real credentials.
+
+> Security note: if a Gmail app password is ever pasted into a chat, doc, or
+> commit, treat it as compromised and generate a fresh one — app passwords
+> are trivial to revoke and replace at myaccount.google.com/apppasswords.
+
 ## Run locally
 
 ```bash
@@ -77,5 +99,3 @@ public/
   board.html/.css/.js   The whiteboard app itself
 data/               SQLite DB + uploaded files (created at runtime)
 ```
-# miroboard
-# miroboard

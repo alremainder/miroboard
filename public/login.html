@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — Boards</title>
+<link rel="stylesheet" href="/home.css" />
+<style>
+  .auth-wrap { max-width: 420px; margin: 80px auto; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab-btn {
+    flex: 1; background: var(--ink-2); border: 1px solid var(--line); color: var(--paper);
+    padding: 10px; border-radius: 8px; font-family: 'Space Grotesk', sans-serif; font-weight: 600;
+    cursor: pointer; font-size: 14px;
+  }
+  .tab-btn.active { background: var(--lime); color: #12141c; border-color: transparent; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .error-msg { color: var(--coral); font-size: 13px; margin: -6px 0 12px; min-height: 16px; }
+  .hint { color: rgba(244,243,239,0.5); font-size: 12px; margin-top: -8px; margin-bottom: 14px; }
+  .otp-input { letter-spacing: 8px; font-size: 20px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topline">
+      <div class="mark"><span class="mark-dot"></span> Boards</div>
+      <p class="tag">Sign in to create and join realtime whiteboards.</p>
+    </header>
+
+    <div class="auth-wrap">
+      <div class="tabs">
+        <button class="tab-btn active" data-mode="login">Log in</button>
+        <button class="tab-btn" data-mode="signup">Sign up</button>
+      </div>
+
+      <!-- LOGIN -->
+      <section id="login-panel" class="panel">
+        <h1>Welcome back</h1>
+        <p>Log in with your username or email.</p>
+        <input id="login-id" type="text" placeholder="Username or email" />
+        <input id="login-pass" type="password" placeholder="Password" />
+        <div class="error-msg" id="login-error"></div>
+        <button id="login-btn" class="btn-primary">Log in →</button>
+      </section>
+
+      <!-- SIGNUP: step 1 email + otp -->
+      <section id="signup-panel" class="panel" hidden>
+        <div class="step active" id="signup-step-email">
+          <h1>Create your account</h1>
+          <p>We'll email you a 6-digit code to verify it's really you.</p>
+          <input id="signup-email" type="email" placeholder="Email address" />
+          <div class="error-msg" id="signup-email-error"></div>
+          <button id="send-otp-btn" class="btn-primary">Send code →</button>
+        </div>
+
+        <div class="step" id="signup-step-otp">
+          <h1>Check your inbox</h1>
+          <p>Enter the 6-digit code we sent to <b id="otp-email-label"></b>.</p>
+          <input id="otp-code" class="otp-input" type="text" inputmode="numeric" maxlength="6" placeholder="------" />
+          <div class="error-msg" id="otp-error"></div>
+          <input id="signup-username" type="text" placeholder="Choose a username" />
+          <input id="signup-password" type="password" placeholder="Choose a password (min 6 chars)" />
+          <div class="error-msg" id="signup-error"></div>
+          <button id="create-account-btn" class="btn-primary">Create account →</button>
+          <p class="hint" id="resend-hint">Didn't get it? <a href="#" id="resend-link" style="color:var(--peri);">Resend code</a></p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/login.js"></script>
+</body>
+</html>

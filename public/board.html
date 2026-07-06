@@ -13,6 +13,7 @@
     <input id="board-name" class="board-name-input" maxlength="60" />
     <div id="presence" class="presence"></div>
     <button id="share-btn" class="pill-btn">Share</button>
+    <button id="logout-btn" class="pill-btn" style="background:transparent;border:1px solid var(--peri);color:var(--paper);">Log out</button>
   </div>
 
   <div id="canvas-wrap">
@@ -66,6 +67,7 @@
     </div>
   </div>
 
+  <script>window.BOARD_ID = "__BOARD_ID__";</script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="/board.js"></script>

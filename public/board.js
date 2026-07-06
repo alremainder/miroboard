@@ -2,14 +2,9 @@
 'use strict';
 
 // ---------------- Setup ----------------
-const boardId = location.pathname.split('/board/')[1];
+const boardId = window.BOARD_ID;
 const socket = io();
-
-let myName = localStorage.getItem('board_user_name');
-if (!myName) {
-  myName = 'Guest ' + Math.floor(Math.random() * 900 + 100);
-  localStorage.setItem('board_user_name', myName);
-}
+let myName = 'You';
 
 const canvas = document.getElementById('board-canvas');
 const ctx = canvas.getContext('2d');
@@ -748,10 +743,11 @@ function repositionCursors() {
 requestAnimationFrame(repositionCursors);
 
 // ---------------- Socket wiring ----------------
-socket.on('connect', () => { socket.emit('join', { boardId, name: myName }); });
+socket.on('connect', () => { socket.emit('join', { boardId }); });
 
 socket.on('board:state', (data) => {
   me.id = socket.id;
+  if (data.you) { me.name = data.you.name; me.color = data.you.color; myName = data.you.name; renderPresence(); }
   document.getElementById('board-name').value = data.name || 'Untitled board';
   shapes.clear(); shapeOrder.length = 0;
   data.shapes.forEach(s => { shapes.set(s.id, s); shapeOrder.push(s.id); });
@@ -796,9 +792,15 @@ nameInput.addEventListener('change', () => socket.emit('board:rename', nameInput
 
 const shareModal = document.getElementById('share-modal');
 document.getElementById('share-btn').addEventListener('click', () => {
-  document.getElementById('share-link').value = location.href;
-  document.getElementById('share-id').textContent = boardId;
+  const link = location.origin + '/board/' + boardId;
+  document.getElementById('share-link').value = link;
+  document.getElementById('share-id').textContent = boardId || '(unknown)';
   shareModal.hidden = false;
+});
+
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
 });
 document.getElementById('close-share').addEventListener('click', () => shareModal.hidden = true);
 document.getElementById('copy-link').addEventListener('click', () => {

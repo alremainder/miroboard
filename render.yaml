@@ -16,3 +16,9 @@ services:
         value: production
       - key: DATA_DIR
         value: /data
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
