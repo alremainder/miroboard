@@ -11,6 +11,7 @@ let ctx = canvas.getContext('2d'); // reassigned temporarily when rendering an o
 const wrap = document.getElementById('canvas-wrap');
 const cursorLayer = document.getElementById('cursor-layer');
 const editLayer = document.getElementById('edit-layer');
+const selectionToolbar = document.getElementById('selection-toolbar');
 
 let readOnly = !window.IS_AUTHED;
 let boardHasPassword = false;
@@ -299,6 +300,27 @@ function handlePositions(s) {
   };
 }
 
+// Positions the floating delete button above the combined bounding box of
+// the current selection (in screen space) and hides it while a drag/marquee
+// is in progress or nothing is selected, so it never gets in the way.
+function updateSelectionToolbar() {
+  if (readOnly || !selected.size || dragMode) { selectionToolbar.hidden = true; return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  selected.forEach(id => {
+    const s = shapes.get(id);
+    if (!s) return;
+    const b = bbox(s);
+    minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+  });
+  if (!isFinite(minX)) { selectionToolbar.hidden = true; return; }
+  const tl = worldToScreen(minX, minY), br = worldToScreen(maxX, maxY);
+  selectionToolbar.hidden = false;
+  selectionToolbar.style.left = ((tl.x + br.x) / 2) + 'px';
+  selectionToolbar.style.top = (Math.min(tl.y, br.y) - 10) + 'px';
+}
+document.getElementById('selection-delete-btn').addEventListener('click', () => { deleteSelected(); markDirty(); });
+
 function render() {
   requestAnimationFrame(render);
   if (!dirty) return;
@@ -310,6 +332,7 @@ function render() {
   shapeOrder.forEach(id => { const s = shapes.get(id); if (s) drawShape(s); });
   if (drawing) drawShape(drawing);
   drawSelectionHandles();
+  updateSelectionToolbar();
   if (marqueeRect) {
     ctx.save();
     ctx.strokeStyle = '#4C6FFF'; ctx.fillStyle = 'rgba(76,111,255,0.08)'; ctx.lineWidth = 1;
@@ -375,17 +398,21 @@ let panLast = null;
 
 wrap.addEventListener('wheel', (e) => {
   e.preventDefault();
-  if (e.ctrlKey || e.metaKey) {
-    const before = screenToWorld(e.offsetX, e.offsetY);
-    const factor = Math.exp(-e.deltaY * 0.0015);
-    camera.scale = Math.min(4, Math.max(0.1, camera.scale * factor));
-    const after = worldToScreen(before.x, before.y);
-    camera.x += e.offsetX - after.x;
-    camera.y += e.offsetY - after.y;
-  } else {
-    camera.x -= e.deltaX;
-    camera.y -= e.deltaY;
+  // Plain scroll wheel zooms in/out, centered on the cursor. Shift+scroll
+  // (or a trackpad's sideways swipe, reported as deltaX) pans horizontally
+  // instead, so panning stays reachable without a modifier for zoom.
+  if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    camera.x -= (e.deltaX || e.deltaY);
+    markDirty();
+    return;
   }
+  const before = screenToWorld(e.offsetX, e.offsetY);
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  camera.scale = Math.min(4, Math.max(0.1, camera.scale * factor));
+  const after = worldToScreen(before.x, before.y);
+  camera.x += e.offsetX - after.x;
+  camera.y += e.offsetY - after.y;
+  if (Math.abs(e.deltaX) > 0.5) camera.x -= e.deltaX; // trackpad diagonal swipe: pan sideways too
   markDirty();
   updateZoomLabel();
 }, { passive: false });
@@ -428,6 +455,7 @@ function onPointerDown(e) {
     if (handle) {
       dragMode = 'resize'; resizeHandle = handle; dragStart = world;
       dragOrigin.set(handle.shape.id, { ...handle.shape });
+      wrap.style.cursor = HANDLE_CURSORS[handle.key] || 'pointer';
       return;
     }
     const hit = hitTest(world.x, world.y);
@@ -437,6 +465,7 @@ function onPointerDown(e) {
       dragMode = 'move'; dragStart = world;
       dragOrigin.clear();
       selected.forEach(id => dragOrigin.set(id, { ...shapes.get(id) }));
+      wrap.style.cursor = 'move';
     } else {
       if (!e.shiftKey) selected.clear();
       dragMode = 'marquee'; dragStart = { x: sx, y: sy };
@@ -473,12 +502,25 @@ function onPointerDown(e) {
   markDirty();
 }
 
+const HANDLE_CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', p1: 'crosshair', p2: 'crosshair' };
+function updateHoverCursor(world) {
+  if (tool === 'hand' || spaceDown || readOnly) return; // handled elsewhere
+  if (tool !== 'select') return;
+  const handle = findHandleAt(world.x, world.y);
+  if (handle) { wrap.style.cursor = HANDLE_CURSORS[handle.key] || 'pointer'; return; }
+  const hit = hitTest(world.x, world.y);
+  wrap.style.cursor = hit ? 'move' : 'default';
+}
+
 function onPointerMove(e) {
   const rect = wrap.getBoundingClientRect();
   const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
   const world = screenToWorld(sx, sy);
 
   socket.emit('cursor', { x: world.x, y: world.y });
+  lastPointer = { x: sx, y: sy };
+
+  if (!dragMode) updateHoverCursor(world);
 
   if (dragMode === 'pan') {
     camera.x += sx - panLast.x; camera.y += sy - panLast.y;
@@ -559,7 +601,9 @@ function onPointerUp() {
     found.forEach(s => selected.add(s.id));
   }
   dragMode = null; resizeHandle = null; dragStart = null; marqueeRect = null;
-  wrap.style.cursor = tool === 'hand' ? 'grab' : 'default';
+  if (tool === 'hand') wrap.style.cursor = 'grab';
+  else if (tool === 'select') updateHoverCursor(screenToWorld(lastPointer.x, lastPointer.y));
+  else wrap.style.cursor = 'crosshair';
   markDirty();
 }
 
